@@ -289,12 +289,14 @@ lookup_arch (const char *name)
 {
   struct sparc_arch *sa;
 
+  if (name == NULL)
+    return NULL;
+
   for (sa = &sparc_arch_table[0]; sa->name != NULL; sa++)
     if (strcmp (sa->name, name) == 0)
-      break;
-  if (sa->name == NULL)
-    return NULL;
-  return sa;
+      return sa;
+  
+  return NULL;
 }
 
 /* Initialize the default opcode arch and word size from the default
@@ -303,31 +305,38 @@ lookup_arch (const char *name)
 static void
 init_default_arch (void)
 {
-  struct sparc_arch *sa = lookup_arch (default_arch);
-
-  if (sa == NULL
-      || sa->default_arch_size == 0)
+  struct sparc_arch *sa;
+  
+  if (default_init_p)
+    return;
+    
+  sa = lookup_arch (default_arch);
+  if (sa == NULL)
     as_fatal (_("Invalid default architecture, broken assembler."));
+    
+  if (sa->default_arch_size == 0)
+    as_fatal (_("Invalid default architecture size, broken assembler."));
 
   max_architecture = sparc_opcode_lookup_arch (sa->opcode_arch);
   if (max_architecture == SPARC_OPCODE_ARCH_BAD)
     as_fatal (_("Bad opcode table, broken assembler."));
-  default_arch_size = sparc_arch_size = sa->default_arch_size;
-  default_init_p = 1;
+    
+  default_arch_size = sa->default_arch_size;
+  sparc_arch_size = sa->default_arch_size;
   default_arch_type = sa->arch_type;
+  default_init_p = 1;
 }
 
 /* Called by TARGET_MACH.  */
 
 unsigned long
-sparc_mach (void)
+sparc_mach(void)
 {
-  /* We don't get a chance to initialize anything before we're called,
-     so handle that now.  */
-  if (! default_init_p)
-    init_default_arch ();
+    if (!default_init_p) {
+        init_default_arch();
+    }
 
-  return sparc_arch_size == 64 ? bfd_mach_sparc_v9 : bfd_mach_sparc;
+    return (sparc_arch_size == 64) ? bfd_mach_sparc_v9 : bfd_mach_sparc;
 }
 
 /* Called by TARGET_FORMAT.  */
@@ -335,16 +344,14 @@ sparc_mach (void)
 const char *
 sparc_target_format (void)
 {
-  /* We don't get a chance to initialize anything before we're called,
-     so handle that now.  */
-  if (! default_init_p)
+  if (!default_init_p)
     init_default_arch ();
 
 #ifdef TE_VXWORKS
   return "elf32-sparc-vxworks";
 #endif
 
-  return sparc_arch_size == 64 ? ELF64_TARGET_FORMAT : ELF_TARGET_FORMAT;
+  return (sparc_arch_size == 64) ? ELF64_TARGET_FORMAT : ELF_TARGET_FORMAT;
 }
 
 /* md_parse_option
@@ -447,9 +454,7 @@ const size_t md_longopts_size = sizeof (md_longopts);
 int
 md_parse_option (int c, const char *arg)
 {
-  /* We don't get a chance to initialize anything before we're called,
-     so handle that now.  */
-  if (! default_init_p)
+  if (!default_init_p)
     init_default_arch ();
 
   switch (c)
@@ -461,58 +466,17 @@ md_parse_option (int c, const char *arg)
 
     case OPTION_XARCH:
       if (startswith (arg, "v9"))
-	md_parse_option (OPTION_64, NULL);
-      else
-	{
-	  if (startswith (arg, "v8")
-	      || startswith (arg, "v7")
-	      || startswith (arg, "v6")
-	      || !strcmp (arg, "sparclet")
-	      || !strcmp (arg, "sparclite")
-	      || !strcmp (arg, "sparc86x"))
-	    md_parse_option (OPTION_32, NULL);
-	}
-      /* Fall through.  */
+        return md_parse_option (OPTION_64, NULL);
+      else if (startswith (arg, "v8") || startswith (arg, "v7") || 
+               startswith (arg, "v6") || !strcmp (arg, "sparclet") ||
+               !strcmp (arg, "sparclite") || !strcmp (arg, "sparc86x"))
+        return md_parse_option (OPTION_32, NULL);
+      /* Fall through */
 
     case 'A':
-      {
-	struct sparc_arch *sa;
-	enum sparc_opcode_arch_val opcode_arch;
-
-	sa = lookup_arch (arg);
-	if (sa == NULL
-	    || ! sa->user_option_p)
-	  {
-	    if (c == OPTION_XARCH)
-	      as_bad (_("invalid architecture -xarch=%s"), arg);
-	    else
-	      as_bad (_("invalid architecture -A%s"), arg);
-	    return 0;
-	  }
-
-	opcode_arch = sparc_opcode_lookup_arch (sa->opcode_arch);
-	if (opcode_arch == SPARC_OPCODE_ARCH_BAD)
-	  as_fatal (_("Bad opcode table, broken assembler."));
-
-	if (!architecture_requested
-	    || opcode_arch > max_architecture)
-	  max_architecture = opcode_arch;
-
-	/* The allowed hardware capabilities are the implied by the
-	   opcodes arch plus any extra capabilities defined in the GAS
-	   arch.  */
-	hwcap_allowed
-	  = (hwcap_allowed
-	     | ((uint64_t) sparc_opcode_archs[opcode_arch].hwcaps2 << 32)
-	     | ((uint64_t) sa->hwcap2_allowed << 32)
-	     | sparc_opcode_archs[opcode_arch].hwcaps
-	     | sa->hwcap_allowed);
-	architecture_requested = 1;
-      }
-      break;
+      return parse_architecture_option (arg, c);
 
     case OPTION_SPARC:
-      /* Ignore -sparc, used by SunOS make default .s.o rule.  */
       break;
 
     case OPTION_ENFORCE_ALIGNED_DATA:
@@ -523,14 +487,13 @@ md_parse_option (int c, const char *arg)
     case OPTION_LITTLE_ENDIAN:
       target_big_endian = 0;
       if (default_arch_type != sparclet)
-	as_fatal ("This target does not support -EL");
+        as_fatal ("This target does not support -EL");
       break;
     case OPTION_LITTLE_ENDIAN_DATA:
       target_little_endian_data = 1;
       target_big_endian = 0;
-      if (default_arch_type != sparc86x
-	  && default_arch_type != v9)
-	as_fatal ("This target does not support --little-endian-data");
+      if (default_arch_type != sparc86x && default_arch_type != v9)
+        as_fatal ("This target does not support --little-endian-data");
       break;
     case OPTION_BIG_ENDIAN:
       target_big_endian = 1;
@@ -539,34 +502,7 @@ md_parse_option (int c, const char *arg)
 
     case OPTION_32:
     case OPTION_64:
-      {
-	const char **list, **l;
-
-	sparc_arch_size = c == OPTION_32 ? 32 : 64;
-	list = bfd_target_list ();
-	for (l = list; *l != NULL; l++)
-	  {
-	    if (sparc_arch_size == 32)
-	      {
-		if (startswith (*l, "elf32-sparc"))
-		  break;
-	      }
-	    else
-	      {
-		if (startswith (*l, "elf64-sparc"))
-		  break;
-	      }
-	  }
-	if (*l == NULL)
-	  as_fatal (_("No compiled in support for %d bit object file format"),
-		    sparc_arch_size);
-	free (list);
-
-	if (sparc_arch_size == 64
-	    && max_architecture < SPARC_OPCODE_ARCH_V9)
-	  max_architecture = SPARC_OPCODE_ARCH_V9;
-      }
-      break;
+      return parse_arch_size_option (c);
 
     case OPTION_TSO:
       sparc_memory_model = MM_TSO;
@@ -585,23 +521,19 @@ md_parse_option (int c, const char *arg)
       break;
 
     case 'Q':
-      /* Qy - do emit .comment
-	 Qn - do not emit .comment.  */
       break;
 
     case 's':
-      /* Use .stab instead of .stab.excl.  */
       break;
 
     case 'q':
-      /* quick -- Native assembler does fewer checks.  */
       break;
 
     case 'K':
       if (strcmp (arg, "PIC") != 0)
-	as_warn (_("Unrecognized option following -K"));
+        as_warn (_("Unrecognized option following -K"));
       else
-	sparc_pic_code = 1;
+        sparc_pic_code = 1;
       break;
 
     case OPTION_NO_UNDECLARED_REGS:
@@ -631,81 +563,142 @@ md_parse_option (int c, const char *arg)
   return 1;
 }
 
-void
-md_show_usage (FILE *stream)
+static int
+parse_architecture_option (const char *arg, int c)
 {
-  const struct sparc_arch *arch;
-  int column;
+  struct sparc_arch *sa;
+  enum sparc_opcode_arch_val opcode_arch;
 
-  /* We don't get a chance to initialize anything before we're called,
-     so handle that now.  */
-  if (! default_init_p)
-    init_default_arch ();
+  sa = lookup_arch (arg);
+  if (sa == NULL || !sa->user_option_p)
+    {
+      if (c == OPTION_XARCH)
+        as_bad (_("invalid architecture -xarch=%s"), arg);
+      else
+        as_bad (_("invalid architecture -A%s"), arg);
+      return 0;
+    }
 
-  fprintf (stream, _("SPARC options:\n"));
-  column = 0;
-  for (arch = &sparc_arch_table[0]; arch->name; arch++)
+  opcode_arch = sparc_opcode_lookup_arch (sa->opcode_arch);
+  if (opcode_arch == SPARC_OPCODE_ARCH_BAD)
+    as_fatal (_("Bad opcode table, broken assembler."));
+
+  if (!architecture_requested || opcode_arch > max_architecture)
+    max_architecture = opcode_arch;
+
+  hwcap_allowed = (hwcap_allowed
+                   | ((uint64_t) sparc_opcode_archs[opcode_arch].hwcaps2 << 32)
+                   | ((uint64_t) sa->hwcap2_allowed << 32)
+                   | sparc_opcode_archs[opcode_arch].hwcaps
+                   | sa->hwcap_allowed);
+  architecture_requested = 1;
+  return 1;
+}
+
+static int
+parse_arch_size_option (int c)
+{
+  const char **list, **l;
+
+  sparc_arch_size = (c == OPTION_32) ? 32 : 64;
+  list = bfd_target_list ();
+  
+  for (l = list; *l != NULL; l++)
     {
-      if (!arch->user_option_p)
-	continue;
-      if (arch != &sparc_arch_table[0])
-	fprintf (stream, " | ");
-      if (column + strlen (arch->name) > 70)
-	{
-	  column = 0;
-	  fputc ('\n', stream);
-	}
-      column += 5 + 2 + strlen (arch->name);
-      fprintf (stream, "-A%s", arch->name);
+      const char *target_prefix = (sparc_arch_size == 32) ? "elf32-sparc" : "elf64-sparc";
+      if (startswith (*l, target_prefix))
+        break;
     }
-  for (arch = &sparc_arch_table[0]; arch->name; arch++)
+  
+  if (*l == NULL)
     {
-      if (!arch->user_option_p)
-	continue;
-      fprintf (stream, " | ");
-      if (column + strlen (arch->name) > 65)
-	{
-	  column = 0;
-	  fputc ('\n', stream);
-	}
-      column += 5 + 7 + strlen (arch->name);
-      fprintf (stream, "-xarch=%s", arch->name);
+      free (list);
+      as_fatal (_("No compiled in support for %d bit object file format"), sparc_arch_size);
     }
-  fprintf (stream, _("\n\
-			specify variant of SPARC architecture\n\
--bump			warn when assembler switches architectures\n\
--sparc			ignored\n\
---enforce-aligned-data	force .long, etc., to be aligned correctly\n\
--relax			relax jumps and branches (default)\n\
--no-relax		avoid changing any jumps and branches\n"));
-  fprintf (stream, _("\
--32			create 32 bit object file\n\
--64			create 64 bit object file\n"));
-  fprintf (stream, _("\
-			[default is %d]\n"), default_arch_size);
-  fprintf (stream, _("\
--TSO			use Total Store Ordering\n\
--PSO			use Partial Store Ordering\n\
--RMO			use Relaxed Memory Ordering\n"));
-  fprintf (stream, _("\
-			[default is %s]\n"), (default_arch_size == 64) ? "RMO" : "TSO");
-  fprintf (stream, _("\
--KPIC			generate PIC\n\
--V			print assembler version number\n\
--undeclared-regs	ignore application global register usage without\n\
-			appropriate .register directive (default)\n\
--no-undeclared-regs	force error on application global register usage\n\
-			without appropriate .register directive\n\
---dcti-couples-detect	warn when an unpredictable DCTI couple is found\n\
--q			ignored\n\
--Qy, -Qn		ignored\n\
--s			ignored\n"));
+  
+  free (list);
+
+  if (sparc_arch_size == 64 && max_architecture < SPARC_OPCODE_ARCH_V9)
+    max_architecture = SPARC_OPCODE_ARCH_V9;
+
+  return 1;
+}
+
+void
+md_show_usage(FILE *stream)
+{
+    const struct sparc_arch *arch;
+    int column = 0;
+    
+    if (!default_init_p)
+        init_default_arch();
+
+    fprintf(stream, _("SPARC options:\n"));
+    
+    for (arch = &sparc_arch_table[0]; arch->name; arch++) {
+        if (!arch->user_option_p)
+            continue;
+            
+        if (arch != &sparc_arch_table[0])
+            fprintf(stream, " | ");
+            
+        if (column + strlen(arch->name) > 70) {
+            column = 0;
+            fputc('\n', stream);
+        }
+        column += 5 + 2 + strlen(arch->name);
+        fprintf(stream, "-A%s", arch->name);
+    }
+    
+    for (arch = &sparc_arch_table[0]; arch->name; arch++) {
+        if (!arch->user_option_p)
+            continue;
+            
+        fprintf(stream, " | ");
+        if (column + strlen(arch->name) > 65) {
+            column = 0;
+            fputc('\n', stream);
+        }
+        column += 5 + 7 + strlen(arch->name);
+        fprintf(stream, "-xarch=%s", arch->name);
+    }
+    
+    fprintf(stream, _("\n"
+        "			specify variant of SPARC architecture\n"
+        "-bump			warn when assembler switches architectures\n"
+        "-sparc			ignored\n"
+        "--enforce-aligned-data	force .long, etc., to be aligned correctly\n"
+        "-relax			relax jumps and branches (default)\n"
+        "-no-relax		avoid changing any jumps and branches\n"));
+        
+    fprintf(stream, _("-32			create 32 bit object file\n"
+        "-64			create 64 bit object file\n"));
+        
+    fprintf(stream, _("			[default is %d]\n"), default_arch_size);
+    
+    fprintf(stream, _("-TSO			use Total Store Ordering\n"
+        "-PSO			use Partial Store Ordering\n"
+        "-RMO			use Relaxed Memory Ordering\n"));
+        
+    fprintf(stream, _("			[default is %s]\n"), 
+        (default_arch_size == 64) ? "RMO" : "TSO");
+        
+    fprintf(stream, _("-KPIC			generate PIC\n"
+        "-V			print assembler version number\n"
+        "-undeclared-regs	ignore application global register usage without\n"
+        "			appropriate .register directive (default)\n"
+        "-no-undeclared-regs	force error on application global register usage\n"
+        "			without appropriate .register directive\n"
+        "--dcti-couples-detect	warn when an unpredictable DCTI couple is found\n"
+        "-q			ignored\n"
+        "-Qy, -Qn		ignored\n"
+        "-s			ignored\n"));
+        
 #ifdef SPARC_BIENDIAN
-  fprintf (stream, _("\
--EL			generate code for a little endian machine\n\
--EB			generate code for a big endian machine\n\
---little-endian-data	generate code for a machine having big endian\n\
-                        instructions and little endian data.\n"));
+    fprintf(stream, _("-EL			generate code for a little endian machine\n"
+        "-EB			generate code for a big endian machine\n"
+        "--little-endian-data	generate code for a machine having big endian\n"
+        "                        instructions and little endian data.\n"));
 #endif
 }
 
@@ -808,14 +801,14 @@ cmp_reg_entry (const void *parg, const void *qarg)
   const struct priv_reg_entry *p = parg;
   const struct priv_reg_entry *q = qarg;
 
-  if (p->name == q->name)
+  if (p->name == NULL && q->name == NULL)
     return 0;
-  else if (p->name == NULL)
+  if (p->name == NULL)
     return 1;
-  else if (q->name == NULL)
+  if (q->name == NULL)
     return -1;
-  else
-    return strcmp (q->name, p->name);
+  
+  return strcmp (q->name, p->name);
 }
 
 /* sparc %-pseudo-operations.  */
@@ -926,12 +919,11 @@ cmp_perc_entry (const void *parg, const void *qarg)
 
   if (p->name == q->name)
     return 0;
-  else if (p->name == NULL)
+  if (p->name == NULL)
     return 1;
-  else if (q->name == NULL)
+  if (q->name == NULL)
     return -1;
-  else
-    return strcmp (q->name, p->name);
+  return strcmp (q->name, p->name);
 }
 
 /* This function is called once, at assembler startup time.  It should
@@ -944,9 +936,6 @@ md_begin (void)
   int lose = 0;
   unsigned int i = 0;
 
-  /* We don't get a chance to initialize anything before md_parse_option
-     is called, and it may not be called, so handle default initialization
-     now if not already done.  */
   if (! default_init_p)
     init_default_arch ();
 
@@ -996,7 +985,7 @@ md_begin (void)
     }
 
   if (lose)
-    as_fatal (_("Broken assembler.  No assembly attempted."));
+    as_fatal (_("Broken assembler. No assembly attempted."));
 
   qsort (priv_reg_table, sizeof (priv_reg_table) / sizeof (priv_reg_table[0]),
 	 sizeof (priv_reg_table[0]), cmp_reg_entry);
@@ -1005,46 +994,28 @@ md_begin (void)
   qsort (v9a_asr_table, sizeof (v9a_asr_table) / sizeof (v9a_asr_table[0]),
 	 sizeof (v9a_asr_table[0]), cmp_reg_entry);
   
-  /* If -bump, record the architecture level at which we start issuing
-     warnings.  The behaviour is different depending upon whether an
-     architecture was explicitly specified.  If it wasn't, we issue warnings
-     for all upwards bumps.  If it was, we don't start issuing warnings until
-     we need to bump beyond the requested architecture or when we bump between
-     conflicting architectures.  */
-
-  if (warn_on_bump
-      && architecture_requested)
+  if (warn_on_bump && architecture_requested)
     {
-      /* `max_architecture' records the requested architecture.
-	 Issue warnings if we go above it.  */
       warn_after_architecture = max_architecture;
     }
 
-  /* Find the highest architecture level that doesn't conflict with
-     the requested one.  */
-
-  if (warn_on_bump
-      || !architecture_requested)
+  if (warn_on_bump || !architecture_requested)
   {
-    enum sparc_opcode_arch_val current_max_architecture
-      = max_architecture;
+    enum sparc_opcode_arch_val current_max_architecture = max_architecture;
 
     for (max_architecture = SPARC_OPCODE_ARCH_MAX;
 	 max_architecture > warn_after_architecture;
 	 --max_architecture)
-      if (! SPARC_OPCODE_CONFLICT_P (max_architecture,
-				     current_max_architecture))
+      if (! SPARC_OPCODE_CONFLICT_P (max_architecture, current_max_architecture))
 	break;
   }
 
-  /* Prepare the tables of %-pseudo-ops.  */
   {
     struct priv_reg_entry *reg_tables[]
       = {priv_reg_table, hpriv_reg_table, v9a_asr_table, NULL};
     struct priv_reg_entry **reg_table;
     int entry = 0;
 
-    /* Add registers.  */
     for (reg_table = reg_tables; reg_table[0]; reg_table++)
       {
         struct priv_reg_entry *reg;
@@ -1058,7 +1029,6 @@ md_begin (void)
           }
       }
 
-    /* Add %-pseudo-ops.  */
     for (i = 0; i < ARRAY_SIZE (pop_table); i++)
       {
 	struct perc_entry *p = &perc_table[entry++];
@@ -1069,12 +1039,10 @@ md_begin (void)
 	p->pop = &pop_table[i];
       }
 
-    /* Last entry is the sentinel.  */
     perc_table[entry].type = perc_entry_none;
 
     qsort (perc_table, sizeof (perc_table) / sizeof (perc_table[0]),
            sizeof (perc_table[0]), cmp_perc_entry);
-
   }
 }
 
@@ -1088,52 +1056,76 @@ sparc_md_finish (void)
   int hwcaps, hwcaps2;
 #endif
 
-  if (sparc_arch_size == 64)
-    switch (current_architecture)
-      {
-      case SPARC_OPCODE_ARCH_V9A: mach = bfd_mach_sparc_v9a; break;
-      case SPARC_OPCODE_ARCH_V9B: mach = bfd_mach_sparc_v9b; break;
-      case SPARC_OPCODE_ARCH_V9C: mach = bfd_mach_sparc_v9c; break;
-      case SPARC_OPCODE_ARCH_V9D: mach = bfd_mach_sparc_v9d; break;
-      case SPARC_OPCODE_ARCH_V9E: mach = bfd_mach_sparc_v9e; break;
-      case SPARC_OPCODE_ARCH_V9V: mach = bfd_mach_sparc_v9v; break;
-      case SPARC_OPCODE_ARCH_V9M: mach = bfd_mach_sparc_v9m; break;
-      case SPARC_OPCODE_ARCH_M8:  mach = bfd_mach_sparc_v9m8; break;
-      default: mach = bfd_mach_sparc_v9; break;
-      }
-  else
-    switch (current_architecture)
-      {
-      case SPARC_OPCODE_ARCH_SPARCLET: mach = bfd_mach_sparc_sparclet; break;
-      case SPARC_OPCODE_ARCH_V9: mach = bfd_mach_sparc_v8plus; break;
-      case SPARC_OPCODE_ARCH_V9A: mach = bfd_mach_sparc_v8plusa; break;
-      case SPARC_OPCODE_ARCH_V9B: mach = bfd_mach_sparc_v8plusb; break;
-      case SPARC_OPCODE_ARCH_V9C: mach = bfd_mach_sparc_v8plusc; break;
-      case SPARC_OPCODE_ARCH_V9D: mach = bfd_mach_sparc_v8plusd; break;
-      case SPARC_OPCODE_ARCH_V9E: mach = bfd_mach_sparc_v8pluse; break;
-      case SPARC_OPCODE_ARCH_V9V: mach = bfd_mach_sparc_v8plusv; break;
-      case SPARC_OPCODE_ARCH_V9M: mach = bfd_mach_sparc_v8plusm; break;
-      case SPARC_OPCODE_ARCH_M8:  mach = bfd_mach_sparc_v8plusm8; break;
-      /* The sparclite is treated like a normal sparc.  Perhaps it shouldn't
-	 be but for now it is (since that's the way it's always been
-	 treated).  */
-      default: mach = bfd_mach_sparc; break;
-      }
+  mach = get_sparc_machine_type();
   bfd_set_arch_mach (stdoutput, bfd_arch_sparc, mach);
 
 #ifndef TE_SOLARIS
-  hwcaps = hwcap_seen & U0xffffffff;
+  hwcaps = hwcap_seen & 0xffffffff;
   hwcaps2 = hwcap_seen >> 32;
 
-  if ((hwcaps
-       && !bfd_elf_add_obj_attr_int (stdoutput, OBJ_ATTR_GNU,
-				     Tag_GNU_Sparc_HWCAPS, hwcaps))
-      || (hwcaps2
-	  && !bfd_elf_add_obj_attr_int (stdoutput, OBJ_ATTR_GNU,
-					Tag_GNU_Sparc_HWCAPS2, hwcaps2)))
-    as_fatal (_("error adding attribute: %s"),
-	      bfd_errmsg (bfd_get_error ()));
+  if (hwcaps && !bfd_elf_add_obj_attr_int (stdoutput, OBJ_ATTR_GNU,
+                                           Tag_GNU_Sparc_HWCAPS, hwcaps))
+    {
+      as_fatal (_("error adding attribute: %s"),
+                bfd_errmsg (bfd_get_error ()));
+    }
+
+  if (hwcaps2 && !bfd_elf_add_obj_attr_int (stdoutput, OBJ_ATTR_GNU,
+                                            Tag_GNU_Sparc_HWCAPS2, hwcaps2))
+    {
+      as_fatal (_("error adding attribute: %s"),
+                bfd_errmsg (bfd_get_error ()));
+    }
 #endif
+}
+
+static unsigned long
+get_sparc_machine_type (void)
+{
+  if (sparc_arch_size == 64)
+    {
+      return get_sparc64_machine_type();
+    }
+  else
+    {
+      return get_sparc32_machine_type();
+    }
+}
+
+static unsigned long
+get_sparc64_machine_type (void)
+{
+  switch (current_architecture)
+    {
+    case SPARC_OPCODE_ARCH_V9A: return bfd_mach_sparc_v9a;
+    case SPARC_OPCODE_ARCH_V9B: return bfd_mach_sparc_v9b;
+    case SPARC_OPCODE_ARCH_V9C: return bfd_mach_sparc_v9c;
+    case SPARC_OPCODE_ARCH_V9D: return bfd_mach_sparc_v9d;
+    case SPARC_OPCODE_ARCH_V9E: return bfd_mach_sparc_v9e;
+    case SPARC_OPCODE_ARCH_V9V: return bfd_mach_sparc_v9v;
+    case SPARC_OPCODE_ARCH_V9M: return bfd_mach_sparc_v9m;
+    case SPARC_OPCODE_ARCH_M8:  return bfd_mach_sparc_v9m8;
+    default: return bfd_mach_sparc_v9;
+    }
+}
+
+static unsigned long
+get_sparc32_machine_type (void)
+{
+  switch (current_architecture)
+    {
+    case SPARC_OPCODE_ARCH_SPARCLET: return bfd_mach_sparc_sparclet;
+    case SPARC_OPCODE_ARCH_V9: return bfd_mach_sparc_v8plus;
+    case SPARC_OPCODE_ARCH_V9A: return bfd_mach_sparc_v8plusa;
+    case SPARC_OPCODE_ARCH_V9B: return bfd_mach_sparc_v8plusb;
+    case SPARC_OPCODE_ARCH_V9C: return bfd_mach_sparc_v8plusc;
+    case SPARC_OPCODE_ARCH_V9D: return bfd_mach_sparc_v8plusd;
+    case SPARC_OPCODE_ARCH_V9E: return bfd_mach_sparc_v8pluse;
+    case SPARC_OPCODE_ARCH_V9V: return bfd_mach_sparc_v8plusv;
+    case SPARC_OPCODE_ARCH_V9M: return bfd_mach_sparc_v8plusm;
+    case SPARC_OPCODE_ARCH_M8:  return bfd_mach_sparc_v8plusm8;
+    default: return bfd_mach_sparc;
+    }
 }
 
 /* Return non-zero if VAL is in the range -(MAX+1) to MAX.  */
@@ -1142,19 +1134,15 @@ static inline int
 in_signed_range (bfd_signed_vma val, bfd_signed_vma max)
 {
   if (max <= 0)
-    abort ();
-  /* Sign-extend the value from the architecture word size, so that
-     0xffffffff is always considered -1 on sparc32.  */
+    return 0;
+  
   if (sparc_arch_size == 32)
     {
       bfd_vma sign = (bfd_vma) 1 << 31;
-      val = ((val & U0xffffffff) ^ sign) - sign;
+      val = ((val & 0xffffffff) ^ sign) - sign;
     }
-  if (val > max)
-    return 0;
-  if (val < ~max)
-    return 0;
-  return 1;
+  
+  return (val <= max && val >= (~max));
 }
 
 /* Return non-zero if VAL is in the range 0 to MAX.  */
@@ -1162,9 +1150,7 @@ in_signed_range (bfd_signed_vma val, bfd_signed_vma max)
 static inline int
 in_unsigned_range (bfd_vma val, bfd_vma max)
 {
-  if (val > max)
-    return 0;
-  return 1;
+  return val <= max;
 }
 
 /* Return non-zero if VAL is in the range -(MAX/2+1) to MAX.
@@ -1174,33 +1160,41 @@ static inline int
 in_bitfield_range (bfd_signed_vma val, bfd_signed_vma max)
 {
   if (max <= 0)
-    abort ();
-  if (val > max)
     return 0;
-  if (val < ~(max >> 1))
+  
+  if (val > max || val < ~(max >> 1))
     return 0;
+  
   return 1;
 }
 
 static int
 sparc_ffs (unsigned int mask)
 {
-  int i;
-
   if (mask == 0)
     return -1;
 
-  for (i = 0; (mask & 1) == 0; ++i)
+  int position = 0;
+  while ((mask & 1) == 0) {
     mask >>= 1;
-  return i;
+    position++;
+  }
+  return position;
 }
 
 /* Implement big shift right.  */
 static bfd_vma
 BSR (bfd_vma val, int amount)
 {
+  if (amount < 0)
+    return 0;
+    
   if (sizeof (bfd_vma) <= 4 && amount >= 32)
     as_fatal (_("Support for 64-bit arithmetic not compiled in."));
+    
+  if ((size_t)amount >= sizeof(bfd_vma) * 8)
+    return 0;
+    
   return val >> amount;
 }
 
@@ -1238,8 +1232,9 @@ synthetize_setuw (const struct sparc_opcode *insn)
 {
   int need_hi22_p = 0;
   int rd = (the_insn.opcode & RD (~0)) >> 25;
+  int is_constant = (the_insn.exp.X_op == O_constant);
 
-  if (the_insn.exp.X_op == O_constant)
+  if (is_constant)
     {
       if (SPARC_OPCODE_ARCH_V9_P (max_architecture))
 	{
@@ -1258,33 +1253,27 @@ synthetize_setuw (const struct sparc_opcode *insn)
 	}
     }
 
-  /* See if operand is absolute and small; skip sethi if so.  */
-  if (the_insn.exp.X_op != O_constant
+  if (!is_constant
       || the_insn.exp.X_add_number >= (1 << 12)
       || the_insn.exp.X_add_number < -(1 << 12))
     {
       the_insn.opcode = (SETHI_INSN | RD (rd)
 			 | ((the_insn.exp.X_add_number >> 10)
-			    & (the_insn.exp.X_op == O_constant
-			       ? 0x3fffff : 0)));
-      the_insn.reloc = (the_insn.exp.X_op != O_constant
-			? BFD_RELOC_HI22 : BFD_RELOC_NONE);
+			    & (is_constant ? 0x3fffff : 0)));
+      the_insn.reloc = (is_constant ? BFD_RELOC_NONE : BFD_RELOC_HI22);
       output_insn (insn, &the_insn);
       need_hi22_p = 1;
     }
 
-  /* See if operand has no low-order bits; skip OR if so.  */
-  if (the_insn.exp.X_op != O_constant
+  if (!is_constant
       || (need_hi22_p && (the_insn.exp.X_add_number & 0x3FF) != 0)
-      || ! need_hi22_p)
+      || !need_hi22_p)
     {
       the_insn.opcode = (OR_INSN | (need_hi22_p ? RS1 (rd) : 0)
 			 | RD (rd) | IMMED
 			 | (the_insn.exp.X_add_number
-			    & (the_insn.exp.X_op != O_constant
-			       ? 0 : need_hi22_p ? 0x3ff : 0x1fff)));
-      the_insn.reloc = (the_insn.exp.X_op != O_constant
-			? BFD_RELOC_LO10 : BFD_RELOC_NONE);
+			    & (is_constant ? (need_hi22_p ? 0x3ff : 0x1fff) : 0)));
+      the_insn.reloc = (is_constant ? BFD_RELOC_NONE : BFD_RELOC_LO10);
       output_insn (insn, &the_insn);
     }
 }
@@ -1295,48 +1284,49 @@ static void
 synthetize_setsw (const struct sparc_opcode *insn)
 {
   int low32, rd, opc;
-
+  
   rd = (the_insn.opcode & RD (~0)) >> 25;
-
+  
   if (the_insn.exp.X_op != O_constant)
     {
       synthetize_setuw (insn);
-
-      /* Need to sign extend it.  */
       the_insn.opcode = (SRA_INSN | RS1 (rd) | RD (rd));
       the_insn.reloc = BFD_RELOC_NONE;
       output_insn (insn, &the_insn);
       return;
     }
-
-  if (sizeof (offsetT) > 4
-      && (the_insn.exp.X_add_number < -(offsetT) U0x80000000
-	  || the_insn.exp.X_add_number > (offsetT) U0xffffffff))
-    as_warn (_("setsw: number not in -2147483648..4294967295 range"));
-
+  
+  if (sizeof (offsetT) > 4)
+    {
+      offsetT value = the_insn.exp.X_add_number;
+      if (value < -(offsetT) U0x80000000 || value > (offsetT) U0xffffffff)
+        as_warn (_("setsw: number not in -2147483648..4294967295 range"));
+    }
+  
   low32 = the_insn.exp.X_add_number;
-
+  
   if (low32 >= 0)
     {
       synthetize_setuw (insn);
       return;
     }
-
-  opc = OR_INSN;
-
+  
   the_insn.reloc = BFD_RELOC_NONE;
-  /* See if operand is absolute and small; skip sethi if so.  */
+  
   if (low32 < -(1 << 12))
     {
       the_insn.opcode = (SETHI_INSN | RD (rd)
-			 | (((~the_insn.exp.X_add_number) >> 10) & 0x3fffff));
+                         | (((~the_insn.exp.X_add_number) >> 10) & 0x3fffff));
       output_insn (insn, &the_insn);
       low32 = 0x1c00 | (low32 & 0x3ff);
       opc = RS1 (rd) | XOR_INSN;
     }
-
-  the_insn.opcode = (opc | RD (rd) | IMMED
-		     | (low32 & 0x1fff));
+  else
+    {
+      opc = OR_INSN;
+    }
+  
+  the_insn.opcode = (opc | RD (rd) | IMMED | (low32 & 0x1fff));
   output_insn (insn, &the_insn);
 }
 
@@ -1352,28 +1342,18 @@ synthetize_setx (const struct sparc_opcode *insn)
   int need_hh22_p = 0, need_hm10_p = 0, need_hi22_p = 0, need_lo10_p = 0;
   int need_xor10_p = 0;
 
-#define SIGNEXT32(x) ((((x) & U0xffffffff) ^ U0x80000000) - U0x80000000)
-  lower32 = SIGNEXT32 (the_insn.exp.X_add_number);
-  upper32 = SIGNEXT32 (BSR (the_insn.exp.X_add_number, 32));
-#undef SIGNEXT32
+  lower32 = ((the_insn.exp.X_add_number & 0xffffffff) ^ 0x80000000) - 0x80000000;
+  upper32 = ((BSR (the_insn.exp.X_add_number, 32) & 0xffffffff) ^ 0x80000000) - 0x80000000;
 
   upper_dstreg = tmpreg;
-  /* The tmp reg should not be the dst reg.  */
+  
   if (tmpreg == dstreg)
     as_warn (_("setx: temporary register same as destination register"));
 
-  /* ??? Obviously there are other optimizations we can do
-     (e.g. sethi+shift for 0x1f0000000) and perhaps we shouldn't be
-     doing some of these.  Later.  If you do change things, try to
-     change all of this to be table driven as well.  */
-  /* What to output depends on the number if it's constant.
-     Compute that first, then output what we've decided upon.  */
   if (the_insn.exp.X_op != O_constant)
     {
       if (sparc_arch_size == 32)
 	{
-	  /* When arch size is 32, we want setx to be equivalent
-	     to setuw for anything but constants.  */
 	  the_insn.exp.X_add_number &= 0xffffffff;
 	  synthetize_setuw (insn);
 	  return;
@@ -1384,49 +1364,30 @@ synthetize_setx (const struct sparc_opcode *insn)
     }
   else
     {
-      /* Reset X_add_number, we've extracted it as upper32/lower32.
-	 Otherwise fixup_segment will complain about not being able to
-	 write an 8 byte number in a 4 byte field.  */
       the_insn.exp.X_add_number = 0;
 
-      /* Only need hh22 if `or' insn can't handle constant.  */
       if (upper32 < -(1 << 12) || upper32 >= (1 << 12))
 	need_hh22_p = 1;
 
-      /* Does bottom part (after sethi) have bits?  */
-      if ((need_hh22_p && (upper32 & 0x3ff) != 0)
-	  /* No hh22, but does upper32 still have bits we can't set
-	     from lower32?  */
-	  || (! need_hh22_p && upper32 != 0 && upper32 != -1))
+      if ((need_hh22_p && (upper32 & 0x3ff) != 0) || 
+          (!need_hh22_p && upper32 != 0 && upper32 != -1))
 	need_hm10_p = 1;
 
-      /* If the lower half is all zero, we build the upper half directly
-	 into the dst reg.  */
-      if (lower32 != 0
-	  /* Need lower half if number is zero or 0xffffffff00000000.  */
-	  || (! need_hh22_p && ! need_hm10_p))
+      if (lower32 != 0 || (!need_hh22_p && !need_hm10_p))
 	{
-	  /* No need for sethi if `or' insn can handle constant.  */
-	  if (lower32 < -(1 << 12) || lower32 >= (1 << 12)
-	      /* Note that we can't use a negative constant in the `or'
-		 insn unless the upper 32 bits are all ones.  */
-	      || (lower32 < 0 && upper32 != -1)
-	      || (lower32 >= 0 && upper32 == -1))
+	  if (lower32 < -(1 << 12) || lower32 >= (1 << 12) ||
+	      (lower32 < 0 && upper32 != -1) ||
+	      (lower32 >= 0 && upper32 == -1))
 	    need_hi22_p = 1;
 
 	  if (need_hi22_p && upper32 == -1)
 	    need_xor10_p = 1;
-
-	  /* Does bottom part (after sethi) have bits?  */
-	  else if ((need_hi22_p && (lower32 & 0x3ff) != 0)
-		   /* No sethi.  */
-		   || (! need_hi22_p && (lower32 & 0x1fff) != 0)
-		   /* Need `or' if we didn't set anything else.  */
-		   || (! need_hi22_p && ! need_hh22_p && ! need_hm10_p))
+	  else if ((need_hi22_p && (lower32 & 0x3ff) != 0) ||
+		   (!need_hi22_p && (lower32 & 0x1fff) != 0) ||
+		   (!need_hi22_p && !need_hh22_p && !need_hm10_p))
 	    need_lo10_p = 1;
 	}
       else
-	/* Output directly to dst reg if lower 32 bits are all zero.  */
 	upper_dstreg = dstreg;
     }
 
@@ -1435,72 +1396,53 @@ synthetize_setx (const struct sparc_opcode *insn)
 
   if (need_hh22_p)
     {
-      the_insn.opcode = (SETHI_INSN | RD (upper_dstreg)
-			 | ((upper32 >> 10) & 0x3fffff));
-      the_insn.reloc = (the_insn.exp.X_op != O_constant
-			? BFD_RELOC_SPARC_HH22 : BFD_RELOC_NONE);
+      the_insn.opcode = (SETHI_INSN | RD (upper_dstreg) | ((upper32 >> 10) & 0x3fffff));
+      the_insn.reloc = (the_insn.exp.X_op != O_constant ? BFD_RELOC_SPARC_HH22 : BFD_RELOC_NONE);
       output_insn (insn, &the_insn);
     }
 
   if (need_hi22_p)
     {
-      the_insn.opcode = (SETHI_INSN | RD (dstreg)
-			 | (((need_xor10_p ? ~lower32 : lower32)
-			     >> 10) & 0x3fffff));
-      the_insn.reloc = (the_insn.exp.X_op != O_constant
-			? BFD_RELOC_SPARC_LM22 : BFD_RELOC_NONE);
+      the_insn.opcode = (SETHI_INSN | RD (dstreg) | 
+                        (((need_xor10_p ? ~lower32 : lower32) >> 10) & 0x3fffff));
+      the_insn.reloc = (the_insn.exp.X_op != O_constant ? BFD_RELOC_SPARC_LM22 : BFD_RELOC_NONE);
       output_insn (insn, &the_insn);
     }
 
   if (need_hm10_p)
     {
-      the_insn.opcode = (OR_INSN
-			 | (need_hh22_p ? RS1 (upper_dstreg) : 0)
-			 | RD (upper_dstreg)
-			 | IMMED
-			 | (upper32 & (need_hh22_p ? 0x3ff : 0x1fff)));
-      the_insn.reloc = (the_insn.exp.X_op != O_constant
-			? BFD_RELOC_SPARC_HM10 : BFD_RELOC_NONE);
+      the_insn.opcode = (OR_INSN | (need_hh22_p ? RS1 (upper_dstreg) : 0) |
+                        RD (upper_dstreg) | IMMED | 
+                        (upper32 & (need_hh22_p ? 0x3ff : 0x1fff)));
+      the_insn.reloc = (the_insn.exp.X_op != O_constant ? BFD_RELOC_SPARC_HM10 : BFD_RELOC_NONE);
       output_insn (insn, &the_insn);
     }
 
   if (need_lo10_p)
     {
-      /* FIXME: One nice optimization to do here is to OR the low part
-	 with the highpart if hi22 isn't needed and the low part is
-	 positive.  */
-      the_insn.opcode = (OR_INSN | (need_hi22_p ? RS1 (dstreg) : 0)
-			 | RD (dstreg)
-			 | IMMED
-			 | (lower32 & (need_hi22_p ? 0x3ff : 0x1fff)));
-      the_insn.reloc = (the_insn.exp.X_op != O_constant
-			? BFD_RELOC_LO10 : BFD_RELOC_NONE);
+      the_insn.opcode = (OR_INSN | (need_hi22_p ? RS1 (dstreg) : 0) |
+                        RD (dstreg) | IMMED | 
+                        (lower32 & (need_hi22_p ? 0x3ff : 0x1fff)));
+      the_insn.reloc = (the_insn.exp.X_op != O_constant ? BFD_RELOC_LO10 : BFD_RELOC_NONE);
       output_insn (insn, &the_insn);
     }
 
-  /* If we needed to build the upper part, shift it into place.  */
   if (need_hh22_p || need_hm10_p)
     {
-      the_insn.opcode = (SLLX_INSN | RS1 (upper_dstreg) | RD (upper_dstreg)
-			 | IMMED | 32);
+      the_insn.opcode = (SLLX_INSN | RS1 (upper_dstreg) | RD (upper_dstreg) | IMMED | 32);
       the_insn.reloc = BFD_RELOC_NONE;
       output_insn (insn, &the_insn);
     }
 
-  /* To get -1 in upper32, we do sethi %hi(~x), r; xor r, -0x400 | x, r.  */
   if (need_xor10_p)
     {
-      the_insn.opcode = (XOR_INSN | RS1 (dstreg) | RD (dstreg) | IMMED
-			 | 0x1c00 | (lower32 & 0x3ff));
+      the_insn.opcode = (XOR_INSN | RS1 (dstreg) | RD (dstreg) | IMMED | 0x1c00 | (lower32 & 0x3ff));
       the_insn.reloc = BFD_RELOC_NONE;
       output_insn (insn, &the_insn);
     }
-
-  /* If we needed to build both upper and lower parts, OR them together.  */
   else if ((need_hh22_p || need_hm10_p) && (need_hi22_p || need_lo10_p))
     {
-      the_insn.opcode = (OR_INSN | RS1 (dstreg) | RS2 (upper_dstreg)
-			 | RD (dstreg));
+      the_insn.opcode = (OR_INSN | RS1 (dstreg) | RS2 (upper_dstreg) | RD (dstreg));
       the_insn.reloc = BFD_RELOC_NONE;
       output_insn (insn, &the_insn);
     }
@@ -1514,65 +1456,78 @@ md_assemble (char *str)
   const struct sparc_opcode *insn;
   int special_case;
 
-  know (str);
+  if (str == NULL)
+    return;
+
   special_case = sparc_ip (str, &insn);
   if (insn == NULL)
     return;
 
-  /* Certain instructions may not appear on delay slots.  Check for
-     these situations.  */
-  if (last_insn != NULL
-      && (last_insn->flags & F_DELAYED) != 0)
-    {
-      /* Before SPARC V9 the effect of having a delayed branch
-         instruction in the delay slot of a conditional delayed branch
-         was undefined.
+  check_delay_slot_constraints(insn);
+  handle_fp_compare_branch_issue(insn);
+  process_special_case(special_case, insn);
+}
 
-         In SPARC V9 DCTI couples are well defined.
+static void
+check_delay_slot_constraints(const struct sparc_opcode *insn)
+{
+  if (last_insn == NULL || (last_insn->flags & F_DELAYED) == 0)
+    return;
 
-         However, starting with the UltraSPARC Architecture 2005, DCTI
-         couples (of all kind) are deprecated and should not be used,
-         as they may be slow or behave differently to what the
-         programmer expects.  */
-      if (dcti_couples_detect
-          && (insn->flags & F_DELAYED) != 0
-          && ((max_architecture < SPARC_OPCODE_ARCH_V9
-               && (last_insn->flags & F_CONDBR) != 0)
-              || max_architecture >= SPARC_OPCODE_ARCH_V9C))
-        as_warn (_("unpredictable DCTI couple"));
+  check_dcti_couples(insn);
+  check_fp_branch_in_delay_slot(insn);
+}
 
+static void
+check_dcti_couples(const struct sparc_opcode *insn)
+{
+  if (!dcti_couples_detect || (insn->flags & F_DELAYED) == 0)
+    return;
 
-      /* We warn about attempts to put a floating point branch in a
-         delay slot, unless the delay slot has been annulled.  */
-      if ((insn->flags & F_FBR) != 0
-          /* ??? This test isn't completely accurate.  We assume anything with
-             F_{UNBR,CONDBR,FBR} set is annullable.  */
-          && ((last_insn->flags & (F_UNBR | F_CONDBR | F_FBR)) == 0
-              || (last_opcode & ANNUL) == 0))
-        as_warn (_("FP branch in delay slot"));
-    }
+  bool is_pre_v9_conditional = (max_architecture < SPARC_OPCODE_ARCH_V9 && 
+                               (last_insn->flags & F_CONDBR) != 0);
+  bool is_v9c_or_later = (max_architecture >= SPARC_OPCODE_ARCH_V9C);
 
-  /* SPARC before v9 does not allow a floating point compare
-     directly before a floating point branch.  Insert a nop
-     instruction if needed, with a warning.  */
-  if (max_architecture < SPARC_OPCODE_ARCH_V9
-      && last_insn != NULL
-      && (insn->flags & F_FBR) != 0
-      && (last_insn->flags & F_FLOAT) != 0
-      && (last_insn->match & OP3 (0x35)) == OP3 (0x35))
-    {
-      struct sparc_it nop_insn;
+  if (is_pre_v9_conditional || is_v9c_or_later)
+    as_warn (_("unpredictable DCTI couple"));
+}
 
-      nop_insn.opcode = NOP_INSN;
-      nop_insn.reloc = BFD_RELOC_NONE;
-      output_insn (insn, &nop_insn);
-      as_warn (_("FP branch preceded by FP compare; NOP inserted"));
-    }
+static void
+check_fp_branch_in_delay_slot(const struct sparc_opcode *insn)
+{
+  if ((insn->flags & F_FBR) == 0)
+    return;
 
+  bool is_not_annullable = ((last_insn->flags & (F_UNBR | F_CONDBR | F_FBR)) == 0 ||
+                           (last_opcode & ANNUL) == 0);
+
+  if (is_not_annullable)
+    as_warn (_("FP branch in delay slot"));
+}
+
+static void
+handle_fp_compare_branch_issue(const struct sparc_opcode *insn)
+{
+  if (max_architecture >= SPARC_OPCODE_ARCH_V9 || 
+      last_insn == NULL ||
+      (insn->flags & F_FBR) == 0 ||
+      (last_insn->flags & F_FLOAT) == 0 ||
+      (last_insn->match & OP3 (0x35)) != OP3 (0x35))
+    return;
+
+  struct sparc_it nop_insn;
+  nop_insn.opcode = NOP_INSN;
+  nop_insn.reloc = BFD_RELOC_NONE;
+  output_insn (insn, &nop_insn);
+  as_warn (_("FP branch preceded by FP compare; NOP inserted"));
+}
+
+static void
+process_special_case(int special_case, const struct sparc_opcode *insn)
+{
   switch (special_case)
     {
     case SPECIAL_CASE_NONE:
-      /* Normal insn.  */
       output_insn (insn, &the_insn);
       break;
 
@@ -1589,123 +1544,100 @@ md_assemble (char *str)
       break;
 
     case SPECIAL_CASE_FDIV:
-      {
-	int rd = (the_insn.opcode >> 25) & 0x1f;
-
-	output_insn (insn, &the_insn);
-
-	/* According to information leaked from Sun, the "fdiv" instructions
-	   on early SPARC machines would produce incorrect results sometimes.
-	   The workaround is to add an fmovs of the destination register to
-	   itself just after the instruction.  This was true on machines
-	   with Weitek 1165 float chips, such as the Sun-4/260 and /280.  */
-	gas_assert (the_insn.reloc == BFD_RELOC_NONE);
-	the_insn.opcode = FMOVS_INSN | rd | RD (rd);
-	output_insn (insn, &the_insn);
-	return;
-      }
+      handle_fdiv_special_case(insn);
+      break;
 
     default:
       as_fatal (_("failed special case insn sanity check"));
     }
 }
 
+static void
+handle_fdiv_special_case(const struct sparc_opcode *insn)
+{
+  int rd = (the_insn.opcode >> 25) & 0x1f;
+
+  output_insn (insn, &the_insn);
+
+  gas_assert (the_insn.reloc == BFD_RELOC_NONE);
+  the_insn.opcode = FMOVS_INSN | rd | RD (rd);
+  output_insn (insn, &the_insn);
+}
+
 static const char *
 get_hwcap_name (uint64_t mask)
 {
-  if (mask & HWCAP_MUL32)
-    return "mul32";
-  if (mask & HWCAP_DIV32)
-    return "div32";
-  if (mask & HWCAP_FSMULD)
-    return "fsmuld";
-  if (mask & HWCAP_V8PLUS)
-    return "v8plus";
-  if (mask & HWCAP_POPC)
-    return "popc";
-  if (mask & HWCAP_VIS)
-    return "vis";
-  if (mask & HWCAP_VIS2)
-    return "vis2";
-  if (mask & HWCAP_ASI_BLK_INIT)
-    return "ASIBlkInit";
-  if (mask & HWCAP_FMAF)
-    return "fmaf";
-  if (mask & HWCAP_VIS3)
-    return "vis3";
-  if (mask & HWCAP_HPC)
-    return "hpc";
-  if (mask & HWCAP_RANDOM)
-    return "random";
-  if (mask & HWCAP_TRANS)
-    return "trans";
-  if (mask & HWCAP_FJFMAU)
-    return "fjfmau";
-  if (mask & HWCAP_IMA)
-    return "ima";
-  if (mask & HWCAP_ASI_CACHE_SPARING)
-    return "cspare";
-  if (mask & HWCAP_AES)
-    return "aes";
-  if (mask & HWCAP_DES)
-    return "des";
-  if (mask & HWCAP_KASUMI)
-    return "kasumi";
-  if (mask & HWCAP_CAMELLIA)
-    return "camellia";
-  if (mask & HWCAP_MD5)
-    return "md5";
-  if (mask & HWCAP_SHA1)
-    return "sha1";
-  if (mask & HWCAP_SHA256)
-    return "sha256";
-  if (mask & HWCAP_SHA512)
-    return "sha512";
-  if (mask & HWCAP_MPMUL)
-    return "mpmul";
-  if (mask & HWCAP_MONT)
-    return "mont";
-  if (mask & HWCAP_PAUSE)
-    return "pause";
-  if (mask & HWCAP_CBCOND)
-    return "cbcond";
-  if (mask & HWCAP_CRC32C)
-    return "crc32c";
-
-  mask = mask >> 32;
-  if (mask & HWCAP2_FJATHPLUS)
-    return "fjathplus";
-  if (mask & HWCAP2_VIS3B)
-    return "vis3b";
-  if (mask & HWCAP2_ADP)
-    return "adp";
-  if (mask & HWCAP2_SPARC5)
-    return "sparc5";
-  if (mask & HWCAP2_MWAIT)
-    return "mwait";
-  if (mask & HWCAP2_XMPMUL)
-    return "xmpmul";
-  if (mask & HWCAP2_XMONT)
-    return "xmont";
-  if (mask & HWCAP2_NSEC)
-    return "nsec";
-  if (mask & HWCAP2_SPARC6)
-    return "sparc6";
-  if (mask & HWCAP2_ONADDSUB)
-    return "onaddsub";
-  if (mask & HWCAP2_ONMUL)
-    return "onmul";
-  if (mask & HWCAP2_ONDIV)
-    return "ondiv";
-  if (mask & HWCAP2_DICTUNP)
-    return "dictunp";
-  if (mask & HWCAP2_FPCMPSHL)
-    return "fpcmpshl";
-  if (mask & HWCAP2_RLE)
-    return "rle";
-  if (mask & HWCAP2_SHA3)
-    return "sha3";
-
+  static const struct {
+    uint64_t flag;
+    const char *name;
+  } hwcap_table[] = {
+    {HWCAP_MUL32, "mul32"},
+    {HWCAP_DIV32, "div32"},
+    {HWCAP_FSMULD, "fsmuld"},
+    {HWCAP_V8PLUS, "v8plus"},
+    {HWCAP_POPC, "popc"},
+    {HWCAP_VIS, "vis"},
+    {HWCAP_VIS2, "vis2"},
+    {HWCAP_ASI_BLK_INIT, "ASIBlkInit"},
+    {HWCAP_FMAF, "fmaf"},
+    {HWCAP_VIS3, "vis3"},
+    {HWCAP_HPC, "hpc"},
+    {HWCAP_RANDOM, "random"},
+    {HWCAP_TRANS, "trans"},
+    {HWCAP_FJFMAU, "fjfmau"},
+    {HWCAP_IMA, "ima"},
+    {HWCAP_ASI_CACHE_SPARING, "cspare"},
+    {HWCAP_AES, "aes"},
+    {HWCAP_DES, "des"},
+    {HWCAP_KASUMI, "kasumi"},
+    {HWCAP_CAMELLIA, "camellia"},
+    {HWCAP_MD5, "md5"},
+    {HWCAP_SHA1, "sha1"},
+    {HWCAP_SHA256, "sha256"},
+    {HWCAP_SHA512, "sha512"},
+    {HWCAP_MPMUL, "mpmul"},
+    {HWCAP_MONT, "mont"},
+    {HWCAP_PAUSE, "pause"},
+    {HWCAP_CBCOND, "cbcond"},
+    {HWCAP_CRC32C, "crc32c"}
+  };
+  
+  static const struct {
+    uint64_t flag;
+    const char *name;
+  } hwcap2_table[] = {
+    {HWCAP2_FJATHPLUS, "fjathplus"},
+    {HWCAP2_VIS3B, "vis3b"},
+    {HWCAP2_ADP, "adp"},
+    {HWCAP2_SPARC5, "sparc5"},
+    {HWCAP2_MWAIT, "mwait"},
+    {HWCAP2_XMPMUL, "xmpmul"},
+    {HWCAP2_XMONT, "xmont"},
+    {HWCAP2_NSEC, "nsec"},
+    {HWCAP2_SPARC6, "sparc6"},
+    {HWCAP2_ONADDSUB, "onaddsub"},
+    {HWCAP2_ONMUL, "onmul"},
+    {HWCAP2_ONDIV, "ondiv"},
+    {HWCAP2_DICTUNP, "dictunp"},
+    {HWCAP2_FPCMPSHL, "fpcmpshl"},
+    {HWCAP2_RLE, "rle"},
+    {HWCAP2_SHA3, "sha3"}
+  };
+  
+  size_t i;
+  
+  for (i = 0; i < sizeof(hwcap_table) / sizeof(hwcap_table[0]); i++) {
+    if (mask & hwcap_table[i].flag) {
+      return hwcap_table[i].name;
+    }
+  }
+  
+  for (i = 0; i < sizeof(hwcap2_table) / sizeof(hwcap2_table[0]); i++) {
+    if ((mask >> 32) & hwcap2_table[i].flag) {
+      return hwcap2_table[i].name;
+    }
+  }
+  
   return "UNKNOWN";
 }
 
@@ -1776,8 +1708,6 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
       the_insn.reloc = BFD_RELOC_NONE;
       v9_arg_p = 0;
 
-      /* Build the opcode, checking as we go to make sure that the
-         operands match.  */
       for (args = insn->args;; ++args)
 	{
 	  switch (*args)
@@ -1786,7 +1716,6 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 	      {
 		int kmask = 0;
 
-		/* Parse a series of masks.  */
 		if (*s == '#')
 		  {
 		    while (*s == '#')
@@ -1848,7 +1777,6 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 	      {
 		int fcn = 0;
 
-		/* Parse a prefetch function.  */
 		if (*s == '#')
 		  {
 		    if (! parse_keyword_arg (sparc_encode_prefetch, &s, &fcn))
@@ -1876,11 +1804,10 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 
 	    case '!':
 	    case '?':
-	      /* Parse a sparc64 privileged register.  */
 	      if (*s == '%')
 		{
 		  struct priv_reg_entry *p;
-		  unsigned int len = 9999999; /* Init to make gcc happy.  */
+		  unsigned int len = 9999999;
 
 		  s += 1;
                   for (p = priv_reg_table; p->name; p++)
@@ -1914,11 +1841,10 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 
 	    case '$':
 	    case '%':
-	      /* Parse a sparc64 hyperprivileged register.  */
 	      if (*s == '%')
 		{
 		  struct priv_reg_entry *p;
-		  unsigned int len = 9999999; /* Init to make gcc happy.  */
+		  unsigned int len = 9999999;
 
 		  s += 1;
                   for (p = hpriv_reg_table; p->name; p++)
@@ -1952,11 +1878,10 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 
 	    case '_':
 	    case '/':
-	      /* Parse a v9a or later ancillary state register.  */
 	      if (*s == '%')
 		{
 		  struct priv_reg_entry *p;
-		  unsigned int len = 9999999; /* Init to make gcc happy.  */
+		  unsigned int len = 9999999;
 
 		  s += 1;
                   for (p = v9a_asr_table; p->name; p++)
@@ -2004,17 +1929,6 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 			  ++s;
 			}
 
-                      /* We used to check here for the asr number to
-                         be between 16 and 31 in V9 and later, as
-                         mandated by the section C.1.1 "Register
-                         Names" in the SPARC spec.  However, we
-                         decided to remove this restriction as a) it
-                         introduces problems when new V9 asr registers
-                         are introduced, b) the Solaris assembler
-                         doesn't implement this restriction and c) the
-                         restriction will go away in future revisions
-                         of the Oracle SPARC Architecture.  */
-
                       if (num < 0 || 31 < num)
                         {
                           error_message = _(": asr number must be between 0 and 31");
@@ -2029,7 +1943,7 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 		      error_message = _(": expecting %asrN");
 		      goto error;
 		    }
-		} /* if %asr  */
+		}
 	      break;
 
 	    case 'I':
@@ -2082,32 +1996,26 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 		}
 
 	    case 'X':
-	      /* V8 systems don't understand BFD_RELOC_SPARC_5.  */
 	      if (SPARC_OPCODE_ARCH_V9_P (max_architecture))
 		the_insn.reloc = BFD_RELOC_SPARC_5;
 	      else
 		the_insn.reloc = BFD_RELOC_SPARC13;
-	      /* These fields are unsigned, but for upward compatibility,
-		 allow negative values as well.  */
 	      goto immediate;
 
 	    case 'Y':
-	      /* V8 systems don't understand BFD_RELOC_SPARC_6.  */
 	      if (SPARC_OPCODE_ARCH_V9_P (max_architecture))
 		the_insn.reloc = BFD_RELOC_SPARC_6;
 	      else
 		the_insn.reloc = BFD_RELOC_SPARC13;
-	      /* These fields are unsigned, but for upward compatibility,
-		 allow negative values as well.  */
 	      goto immediate;
 
 	    case 'k':
-	      the_insn.reloc = /* RELOC_WDISP2_14 */ BFD_RELOC_SPARC_WDISP16;
+	      the_insn.reloc = BFD_RELOC_SPARC_WDISP16;
 	      the_insn.pcrel = 1;
 	      goto immediate;
 
 	    case '=':
-	      the_insn.reloc = /* RELOC_WDISP2_8 */ BFD_RELOC_SPARC_WDISP10;
+	      the_insn.reloc = BFD_RELOC_SPARC_WDISP10;
 	      the_insn.pcrel = 1;
 	      goto immediate;
 
@@ -2222,7 +2130,7 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 		}
 	      break;
 
-	    case '\0':		/* End of args.  */
+	    case '\0':
 	      if (s[0] == ',' && s[1] == '%')
 		{
 		  char *s1;
@@ -2302,7 +2210,7 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 		}
 	      break;
 
-	    case '[':		/* These must match exactly.  */
+	    case '[':
 	    case ']':
 	    case ',':
 	      if (*s++ == *args)
@@ -2314,7 +2222,7 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 		continue;
 	      break;
 
-	    case '#':		/* Must be at least one digit.  */
+	    case '#':
 	      if (ISDIGIT (*s++))
 		{
 		  while (ISDIGIT (*s))
@@ -2325,7 +2233,7 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 		}
 	      break;
 
-	    case 'C':		/* Coprocessor state register.  */
+	    case 'C':
 	      if (startswith (s, "%csr"))
 		{
 		  s += 4;
@@ -2333,7 +2241,7 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 		}
 	      break;
 
-	    case 'b':		/* Next operand is a coprocessor register.  */
+	    case 'b':
 	    case 'c':
 	    case 'D':
 	      if (*s++ == '%' && *s++ == 'c' && ISDIGIT (*s))
@@ -2369,7 +2277,7 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 		}
 	      break;
 
-	    case 'r':		/* next operand must be a register */
+	    case 'r':
 	    case 'O':
 	    case '1':
 	    case '2':
@@ -2379,7 +2287,7 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 		  switch (c = *s++)
 		    {
 
-		    case 'f':	/* frame pointer */
+		    case 'f':
 		      if (*s++ == 'p')
 			{
 			  mask = 0x1e;
@@ -2387,7 +2295,7 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 			}
 		      goto error;
 
-		    case 'g':	/* global register */
+		    case 'g':
 		      c = *s++;
 		      if (isoctal (c))
 			{
@@ -2396,7 +2304,7 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 			}
 		      goto error;
 
-		    case 'i':	/* in register */
+		    case 'i':
 		      c = *s++;
 		      if (isoctal (c))
 			{
@@ -2405,7 +2313,7 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 			}
 		      goto error;
 
-		    case 'l':	/* local register */
+		    case 'l':
 		      c = *s++;
 		      if (isoctal (c))
 			{
@@ -2414,7 +2322,7 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 			}
 		      goto error;
 
-		    case 'o':	/* out register */
+		    case 'o':
 		      c = *s++;
 		      if (isoctal (c))
 			{
@@ -2423,7 +2331,7 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 			}
 		      goto error;
 
-		    case 's':	/* stack pointer */
+		    case 's':
 		      if (*s++ == 'p')
 			{
 			  mask = 0xe;
@@ -2431,7 +2339,7 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 			}
 		      goto error;
 
-		    case 'r':	/* any register */
+		    case 'r':
 		      if (!ISDIGIT ((c = *s++)))
 			{
 			  goto error;
@@ -2469,8 +2377,6 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 		      && no_undeclared_regs && ! globals[mask])
 		    as_bad (_("detected global register use not covered by .register pseudo-op"));
 
-		  /* Got the register, now figure out where
-		     it goes in the opcode.  */
 		  switch (*args)
 		    {
 		    case '1':
@@ -2496,7 +2402,7 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 		}
 	      break;
 
-	    case 'e':		/* next operand is a floating point register */
+	    case 'e':
 	    case 'v':
 	    case 'V':
             case ';':
@@ -2527,7 +2433,7 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 		    for (mask = 0; ISDIGIT (*s); ++s)
 		      {
 			mask = 10 * mask + (*s - '0');
-		      }		/* read the number */
+		      }
 
 		    if ((*args == 'v'
 			 || *args == 'B'
@@ -2537,7 +2443,6 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 			 || format == 'd')
 			&& (mask & 1))
 		      {
-                        /* register must be even numbered */
 			break;
 		      }
 
@@ -2547,7 +2452,6 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 			 || format == 'q')
 			&& (mask & 3))
 		      {
-                        /* register must be multiple of 4 */
 			break;
 		      }
 
@@ -2556,13 +2460,11 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
                          || *args == '^')
                         && (mask & 7))
                       {
-                        /* register must be multiple of 8 */
                         break;
                       }
 
                     if (*args == '\'' && mask < 48)
                       {
-                        /* register must be higher or equal than %f48 */
                         break;
                       }
 
@@ -2573,7 +2475,7 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 			else
 			  error_message = _(": There are only 32 f registers; [0-31]");
 			goto error;
-		      }	/* on error */
+		      }
 		    else if (mask >= 32)
 		      {
 			if (SPARC_OPCODE_ARCH_V9_P (max_architecture))
@@ -2585,7 +2487,7 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 				goto error;
 			      }
 			    v9_arg_p = 1;
-			    mask -= 31;	/* wrap high bit */
+			    mask -= 31;
 			  }
 			else
 			  {
@@ -2597,7 +2499,7 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 		else
 		  {
 		    break;
-		  }	/* if not an 'f' register.  */
+		  }
 
 		switch (*args)
 		  {
@@ -2639,11 +2541,11 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 			goto error;
 		      }
 		    continue;
-		  }		/* Pack it in.  */
+		  }
 
 		know (0);
 		break;
-	      }			/* float arg  */
+	      }
 
 	    case 'F':
 	      if (startswith (s, "%fsr"))
@@ -2661,29 +2563,27 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 		}
 	      break;
 
-	    case '0':		/* 64 bit immediate (set, setsw, setx insn)  */
-	      the_insn.reloc = BFD_RELOC_NONE; /* reloc handled elsewhere  */
+	    case '0':
+	      the_insn.reloc = BFD_RELOC_NONE;
 	      goto immediate;
 
-	    case 'l':		/* 22 bit PC relative immediate  */
+	    case 'l':
 	      the_insn.reloc = BFD_RELOC_SPARC_WDISP22;
 	      the_insn.pcrel = 1;
 	      goto immediate;
 
-	    case 'L':		/* 30 bit immediate  */
+	    case 'L':
 	      the_insn.reloc = BFD_RELOC_32_PCREL_S2;
 	      the_insn.pcrel = 1;
 	      goto immediate;
 
 	    case 'h':
-	    case 'n':		/* 22 bit immediate  */
+	    case 'n':
 	      the_insn.reloc = BFD_RELOC_SPARC22;
 	      goto immediate;
 
-	    case 'i':		/* 13 bit immediate  */
+	    case 'i':
 	      the_insn.reloc = BFD_RELOC_SPARC13;
-
-	      /* fallthrough */
 
 	    immediate:
 	      if (is_whitespace (*s))
@@ -2695,7 +2595,6 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 		static expressionS op_exp;
 		bfd_reloc_code_real_type old_reloc = the_insn.reloc;
 
-		/* Check for %hi, etc.  */
 		if (*s == '%')
 		  {
                     const struct perc_entry *p;
@@ -2718,16 +2617,6 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 		    s += p->len + 2;
 		    v9_arg_p = p->pop->flags & F_POP_V9;
 		  }
-
-		/* Note that if the get_expression() fails, we will still
-		   have created U entries in the symbol table for the
-		   'symbols' in the input string.  Try not to create U
-		   symbols for registers, etc.  */
-
-		/* This stuff checks to see if the expression ends in
-		   +%reg.  If it does, it removes the register from
-		   the expression, and re-sets 's' to point to the
-		   right place.  */
 
 		if (op_arg)
 		  {
@@ -2787,506 +2676,23 @@ sparc_ip (char *str, const struct sparc_opcode **pinsn)
 		    if (s1)
 		      {
 			*s1 = '\0';
-			if (op_arg && s1 == s + 1)
-			  the_insn.exp.X_op = O_absent;
-			else
-			  (void) get_expression (s);
-			*s1 = '+';
-			if (op_arg)
-			  *s = ')';
-			s = s1;
-		      }
-		  }
-		else
-		  s1 = NULL;
-
-		if (!s1)
-		  {
-		    (void) get_expression (s);
-		    if (op_arg)
-		      *s = ')';
-		    s = expr_parse_end;
-		  }
-
-		if (op_arg)
-		  {
-		    the_insn.exp2 = the_insn.exp;
-		    the_insn.exp = op_exp;
-		    if (the_insn.exp2.X_op == O_absent)
-		      the_insn.exp2.X_op = O_illegal;
-		    else if (the_insn.exp.X_op == O_absent)
-		      {
-			the_insn.exp = the_insn.exp2;
-			the_insn.exp2.X_op = O_illegal;
-		      }
-		    else if (the_insn.exp.X_op == O_constant)
-		      {
-			valueT val = the_insn.exp.X_add_number;
-			switch (the_insn.reloc)
-			  {
-			  default:
-			    break;
-
-			  case BFD_RELOC_SPARC_HH22:
-			    val = BSR (val, 32);
-			    /* Fall through.  */
-
-			  case BFD_RELOC_SPARC_LM22:
-			  case BFD_RELOC_HI22:
-			    val = (val >> 10) & 0x3fffff;
-			    break;
-
-			  case BFD_RELOC_SPARC_HM10:
-			    val = BSR (val, 32);
-			    /* Fall through.  */
-
-			  case BFD_RELOC_LO10:
-			    val &= 0x3ff;
-			    break;
-
-			  case BFD_RELOC_SPARC_H34:
-			    val >>= 12;
-			    val &= 0x3fffff;
-			    break;
-
-			  case BFD_RELOC_SPARC_H44:
-			    val >>= 22;
-			    val &= 0x3fffff;
-			    break;
-
-			  case BFD_RELOC_SPARC_M44:
-			    val >>= 12;
-			    val &= 0x3ff;
-			    break;
-
-			  case BFD_RELOC_SPARC_L44:
-			    val &= 0xfff;
-			    break;
-
-			  case BFD_RELOC_SPARC_HIX22:
-			    val = ~val;
-			    val = (val >> 10) & 0x3fffff;
-			    break;
-
-			  case BFD_RELOC_SPARC_LOX10:
-			    val = (val & 0x3ff) | 0x1c00;
-			    break;
-			  }
-			the_insn.exp = the_insn.exp2;
-			the_insn.exp.X_add_number += val;
-			the_insn.exp2.X_op = O_illegal;
-			the_insn.reloc = old_reloc;
-		      }
-		    else if (the_insn.exp2.X_op != O_constant)
-		      {
-			as_bad (_("Illegal operands: Can't add non-constant expression to %%%s()"), op_arg);
-			return special_case;
-		      }
-		    else
-		      {
-			if (old_reloc != BFD_RELOC_SPARC13
-			    || the_insn.reloc != BFD_RELOC_LO10
-			    || sparc_arch_size != 64
-			    || sparc_pic_code)
-			  {
-			    as_bad (_("Illegal operands: Can't do arithmetics involving %%%s() of a relocatable symbol"), op_arg);
-			    return special_case;
-			  }
-			the_insn.reloc = BFD_RELOC_SPARC_OLO10;
-		      }
-		  }
-	      }
-	      /* Check for constants that don't require emitting a reloc.  */
-	      if (the_insn.exp.X_op == O_constant
-		  && the_insn.exp.X_add_symbol == 0
-		  && the_insn.exp.X_op_symbol == 0)
-		{
-		  /* For pc-relative call instructions, we reject
-		     constants to get better code.  */
-		  if (the_insn.pcrel
-		      && the_insn.reloc == BFD_RELOC_32_PCREL_S2
-		      && in_signed_range (the_insn.exp.X_add_number, 0x3fff))
-		    {
-		      error_message = _(": PC-relative operand can't be a constant");
-		      goto error;
-		    }
-
-		  if (the_insn.reloc >= BFD_RELOC_SPARC_TLS_GD_HI22
-		      && the_insn.reloc <= BFD_RELOC_SPARC_TLS_TPOFF64)
-		    {
-		      error_message = _(": TLS operand can't be a constant");
-		      goto error;
-		    }
-
-		  /* Constants that won't fit are checked in md_apply_fix
-		     and bfd_install_relocation.
-		     ??? It would be preferable to install the constants
-		     into the insn here and save having to create a fixS
-		     for each one.  There already exists code to handle
-		     all the various cases (e.g. in md_apply_fix and
-		     bfd_install_relocation) so duplicating all that code
-		     here isn't right.  */
-
-		  /* This is a special case to handle cbcond instructions
-		     properly, which can need two relocations.  The first
-		     one is for the 5-bit immediate field and the latter
-		     is going to be for the WDISP10 branch part.  We
-		     handle the R_SPARC_5 immediate directly here so that
-		     we don't need to add support for multiple relocations
-		     in one instruction just yet.  */
-		  if (the_insn.reloc == BFD_RELOC_SPARC_5
-                      && ((insn->match & OP(0x3)) == 0))
-		    {
-		      valueT val = the_insn.exp.X_add_number;
-
-		      the_insn.reloc = BFD_RELOC_NONE;
-		      if (! in_bitfield_range (val, 0x1f))
-			{
-			  error_message = _(": Immediate value in cbcond is out of range.");
-			  goto error;
-			}
-		      opcode |= val & 0x1f;
-		    }
-		}
-
-	      continue;
-
-	    case 'a':
-	      if (*s++ == 'a')
-		{
-		  opcode |= ANNUL;
-		  continue;
-		}
-	      break;
-
-	    case 'A':
-	      {
-		int asi = 0;
-
-		/* Parse an asi.  */
-		if (*s == '#')
-		  {
-		    if (! parse_sparc_asi (&s, &sasi))
-		      {
-			error_message = _(": invalid ASI name");
-			goto error;
-		      }
-		    asi = sasi->value;
-		  }
-		else
-		  {
-		    if (! parse_const_expr_arg (&s, &asi))
-		      {
-			error_message = _(": invalid ASI expression");
-			goto error;
-		      }
-		    if (asi < 0 || asi > 255)
-		      {
-			error_message = _(": invalid ASI number");
-			goto error;
-		      }
-		  }
-		opcode |= ASI (asi);
-		continue;
-	      }			/* Alternate space.  */
-
-	    case 'p':
-	      if (startswith (s, "%psr"))
-		{
-		  s += 4;
-		  continue;
-		}
-	      break;
-
-	    case 'q':		/* Floating point queue.  */
-	      if (startswith (s, "%fq"))
-		{
-		  s += 3;
-		  continue;
-		}
-	      break;
-
-	    case 'Q':		/* Coprocessor queue.  */
-	      if (startswith (s, "%cq"))
-		{
-		  s += 3;
-		  continue;
-		}
-	      break;
-
-	    case 'S':
-	      if (strcmp (str, "set") == 0
-		  || strcmp (str, "setuw") == 0)
-		{
-		  special_case = SPECIAL_CASE_SET;
-		  continue;
-		}
-	      else if (strcmp (str, "setsw") == 0)
-		{
-		  special_case = SPECIAL_CASE_SETSW;
-		  continue;
-		}
-	      else if (strcmp (str, "setx") == 0)
-		{
-		  special_case = SPECIAL_CASE_SETX;
-		  continue;
-		}
-	      else if (startswith (str, "fdiv"))
-		{
-		  special_case = SPECIAL_CASE_FDIV;
-		  continue;
-		}
-	      break;
-
-	    case 'o':
-	      if (!startswith (s, "%asi"))
-		break;
-	      s += 4;
-	      continue;
-
-	    case 's':
-	      if (!startswith (s, "%fprs"))
-		break;
-	      s += 5;
-	      continue;
-
-	    case '{':
-	      if (!startswith (s, "%mcdper"))
-		break;
-	      s += 7;
-	      continue;
-
-            case '&':
-              if (!startswith (s, "%entropy"))
-                break;
-              s += 8;
-              continue;
-
-	    case 'E':
-	      if (!startswith (s, "%ccr"))
-		break;
-	      s += 4;
-	      continue;
-
-	    case 't':
-	      if (!startswith (s, "%tbr"))
-		break;
-	      s += 4;
-	      continue;
-
-	    case 'w':
-	      if (!startswith (s, "%wim"))
-		break;
-	      s += 4;
-	      continue;
-
-            case '|':
-              {
-                int imm2 = 0;
-
-                /* Parse a 2-bit immediate.  */
-                if (! parse_const_expr_arg (&s, &imm2))
-                  {
-                    error_message = _(": non-immdiate imm2 operand");
-                    goto error;
-                  }
-                if ((imm2 & ~0x3) != 0)
-                  {
-                    error_message = _(": imm2 immediate operand out of range (0-3)");
-                    goto error;
-                  }
-
-                opcode |= ((imm2 & 0x2) << 3) | (imm2 & 0x1);
-                continue;
-              }
-              
-	    case 'x':
-	      {
-		char *push = input_line_pointer;
-		expressionS e;
-
-		input_line_pointer = s;
-		expression (&e);
-		if (e.X_op == O_constant)
-		  {
-		    int n = e.X_add_number;
-		    if (n != e.X_add_number || (n & ~0x1ff) != 0)
-		      as_bad (_("OPF immediate operand out of range (0-0x1ff)"));
-		    else
-		      opcode |= e.X_add_number << 5;
-		  }
-		else
-		  as_bad (_("non-immediate OPF operand, ignored"));
-		s = input_line_pointer;
-		input_line_pointer = push;
-		continue;
-	      }
-
-	    case 'y':
-	      if (!startswith (s, "%y"))
-		break;
-	      s += 2;
-	      continue;
-
-	    case 'u':
-	    case 'U':
-	      {
-		/* Parse a sparclet cpreg.  */
-		int cpreg;
-		if (! parse_keyword_arg (sparc_encode_sparclet_cpreg, &s, &cpreg))
-		  {
-		    error_message = _(": invalid cpreg name");
-		    goto error;
-		  }
-		opcode |= (*args == 'U' ? RS1 (cpreg) : RD (cpreg));
-		continue;
-	      }
-
-	    default:
-	      as_fatal (_("failed sanity check."));
-	    }			/* switch on arg code.  */
-
-	  /* Break out of for() loop.  */
-	  break;
-	}			/* For each arg that we expect.  */
-
-    error:
-      if (match == 0)
-	{
-	  /* Args don't match.  */
-	  if (&insn[1] - sparc_opcodes < sparc_num_opcodes
-	      && (insn->name == insn[1].name
-		  || !strcmp (insn->name, insn[1].name)))
-	    {
-	      ++insn;
-	      s = argsStart;
-	      continue;
-	    }
-	  else
-	    {
-	      as_bad (_("Illegal operands%s"), error_message);
-	      return special_case;
-	    }
-	}
-      else
-	{
-	  /* We have a match.  Now see if the architecture is OK.  */
-	  /* String to use in case of architecture warning.  */
-	  const char *msg_str = str;
-	  int needed_arch_mask = insn->architecture;
-
-          /* Include the ASI architecture needed as well */
-          if (sasi && needed_arch_mask > sasi->architecture)
-            {
-              needed_arch_mask = sasi->architecture;
-              msg_str = sasi->name;
-            }
-
-	  uint64_t hwcaps = ((uint64_t) insn->hwcaps2 << 32) | insn->hwcaps;
-
-#ifndef TE_SOLARIS
-	  if (hwcaps)
-		  hwcap_seen |= hwcaps;
-#endif
-	  if (v9_arg_p)
-	    {
-	      needed_arch_mask &=
-		~(SPARC_OPCODE_ARCH_MASK (SPARC_OPCODE_ARCH_V9) - 1);
-	      if (! needed_arch_mask)
-		needed_arch_mask =
-		  SPARC_OPCODE_ARCH_MASK (SPARC_OPCODE_ARCH_V9);
-	    }
-
-	  if (needed_arch_mask
-	      & SPARC_OPCODE_SUPPORTED (current_architecture))
-	    /* OK.  */
-	    ;
-	  /* Can we bump up the architecture?  */
-	  else if (needed_arch_mask
-		   & SPARC_OPCODE_SUPPORTED (max_architecture))
-	    {
-	      enum sparc_opcode_arch_val needed_architecture =
-		sparc_ffs (SPARC_OPCODE_SUPPORTED (max_architecture)
-			   & needed_arch_mask);
-
-	      gas_assert (needed_architecture <= SPARC_OPCODE_ARCH_MAX);
-	      if (warn_on_bump
-		  && needed_architecture > warn_after_architecture)
-		{
-		  as_warn (_("architecture bumped from \"%s\" to \"%s\" on \"%s\""),
-			   sparc_opcode_archs[current_architecture].name,
-			   sparc_opcode_archs[needed_architecture].name,
-			   msg_str);
-		  warn_after_architecture = needed_architecture;
-		}
-	      current_architecture = needed_architecture;
-	      hwcap_allowed
-		= (hwcap_allowed
-		   | hwcaps
-		   | ((uint64_t) sparc_opcode_archs[current_architecture].hwcaps2 << 32)
-		   | sparc_opcode_archs[current_architecture].hwcaps);
-	    }
-	  /* Conflict.  */
-	  /* ??? This seems to be a bit fragile.  What if the next entry in
-	     the opcode table is the one we want and it is supported?
-	     It is possible to arrange the table today so that this can't
-	     happen but what about tomorrow?  */
-	  else
-	    {
-	      int arch, printed_one_p = 0;
-	      char *p;
-	      char required_archs[SPARC_OPCODE_ARCH_MAX * 16];
-
-	      /* Create a list of the architectures that support the insn.  */
-	      needed_arch_mask &= ~SPARC_OPCODE_SUPPORTED (max_architecture);
-	      p = required_archs;
-	      arch = sparc_ffs (needed_arch_mask);
-	      while ((1 << arch) <= needed_arch_mask)
-		{
-		  if ((1 << arch) & needed_arch_mask)
-		    {
-		      if (printed_one_p)
-			*p++ = '|';
-		      strcpy (p, sparc_opcode_archs[arch].name);
-		      p += strlen (p);
-		      printed_one_p = 1;
-		    }
-		  ++arch;
-		}
-
-	      as_bad (_("Architecture mismatch on \"%s %s\"."), str, argsStart);
-	      as_tsktsk (_("(Requires %s; requested architecture is %s.)"),
-			 required_archs,
-			 sparc_opcode_archs[max_architecture].name);
-	      return special_case;
-	    }
-
-	  /* Make sure the hwcaps used by the instruction are
-	     currently enabled.  */
-	  if (hwcaps & ~hwcap_allowed)
-	    {
-	      const char *hwcap_name = get_hwcap_name(hwcaps & ~hwcap_allowed);
-
-	      as_bad (_("Hardware capability \"%s\" not enabled for \"%s\"."),
-		      hwcap_name, str);
-	      return special_case;
-	    }
-	} /* If no match.  */
-
-      break;
-    } /* Forever looking for a match.  */
-
-  the_insn.opcode = opcode;
-  return special_case;
-}
+			if (op_arg && s1 ==
 
 static char *
 skip_over_keyword (char *q)
 {
-  for (q = q + (*q == '#' || *q == '%');
-       ISALNUM (*q) || *q == '_';
-       ++q)
-    continue;
+  if (q == NULL) {
+    return NULL;
+  }
+  
+  if (*q == '#' || *q == '%') {
+    q++;
+  }
+  
+  while (ISALNUM (*q) || *q == '_') {
+    q++;
+  }
+  
   return q;
 }
 
@@ -3296,14 +2702,22 @@ parse_sparc_asi (char **input_pointer_p, const sparc_asi **value_p)
   const sparc_asi *value;
   char c, *p, *q;
 
+  if (input_pointer_p == NULL || *input_pointer_p == NULL || value_p == NULL)
+    return 0;
+
   p = *input_pointer_p;
   q = skip_over_keyword(p);
+  if (q == NULL)
+    return 0;
+
   c = *q;
-  *q = 0;
+  *q = '\0';
   value = sparc_encode_asi (p);
   *q = c;
+  
   if (value == NULL)
     return 0;
+    
   *value_p = value;
   *input_pointer_p = q;
   return 1;
@@ -3322,14 +2736,22 @@ parse_keyword_arg (int (*lookup_fn) (const char *),
   int value;
   char c, *p, *q;
 
+  if (!lookup_fn || !input_pointerP || !*input_pointerP || !valueP)
+    return 0;
+
   p = *input_pointerP;
   q = skip_over_keyword(p);
+  if (!q)
+    return 0;
+    
   c = *q;
-  *q = 0;
+  *q = '\0';
   value = (*lookup_fn) (p);
   *q = c;
+  
   if (value == -1)
     return 0;
+    
   *valueP = value;
   *input_pointerP = q;
   return 1;
@@ -3341,27 +2763,28 @@ parse_keyword_arg (int (*lookup_fn) (const char *),
 static int
 parse_const_expr_arg (char **input_pointerP, int *valueP)
 {
-  char *save = input_line_pointer;
+  char *save;
   expressionS exp;
 
+  if (!input_pointerP || !valueP)
+    return 0;
+
+  save = input_line_pointer;
   input_line_pointer = *input_pointerP;
-  /* The next expression may be something other than a constant
-     (say if we're not processing the right variant of the insn).
-     Don't call expression unless we're sure it will succeed as it will
-     signal an error (which we want to defer until later).  */
-  /* FIXME: It might be better to define md_operand and have it recognize
-     things like %asi, etc. but continuing that route through to the end
-     is a lot of work.  */
+
   if (*input_line_pointer == '%')
     {
       input_line_pointer = save;
       return 0;
     }
+
   expression (&exp);
   *input_pointerP = input_line_pointer;
   input_line_pointer = save;
+
   if (exp.X_op != O_constant)
     return 0;
+
   *valueP = exp.X_add_number;
   return 1;
 }
@@ -3374,65 +2797,82 @@ get_expression (char *str)
   char *save_in;
   segT seg;
 
+  if (str == NULL)
+    return 1;
+
   save_in = input_line_pointer;
   input_line_pointer = str;
   seg = expression (&the_insn.exp);
-  if (seg != absolute_section
-      && seg != text_section
-      && seg != data_section
-      && seg != bss_section
-      && seg != undefined_section)
+  
+  if (seg == absolute_section ||
+      seg == text_section ||
+      seg == data_section ||
+      seg == bss_section ||
+      seg == undefined_section)
     {
-      the_insn.error = _("bad segment");
       expr_parse_end = input_line_pointer;
       input_line_pointer = save_in;
-      return 1;
+      return 0;
     }
+
+  the_insn.error = _("bad segment");
   expr_parse_end = input_line_pointer;
   input_line_pointer = save_in;
-  return 0;
+  return 1;
 }
 
 /* Subroutine of md_assemble to output one insn.  */
 
 static void
-output_insn (const struct sparc_opcode *insn, struct sparc_it *theinsn)
+output_insn(const struct sparc_opcode *insn, struct sparc_it *theinsn)
 {
-  char *toP = frag_more (4);
-
-  /* Put out the opcode.  */
-  if (INSN_BIG_ENDIAN)
-    number_to_chars_bigendian (toP, theinsn->opcode, 4);
-  else
-    number_to_chars_littleendian (toP, theinsn->opcode, 4);
-
-  /* Put out the symbol-dependent stuff.  */
-  if (theinsn->reloc != BFD_RELOC_NONE)
-    {
-      fixS *fixP =  fix_new_exp (frag_now,	/* Which frag.  */
-				 (toP - frag_now->fr_literal),	/* Where.  */
-				 4,		/* Size.  */
-				 &theinsn->exp,
-				 theinsn->pcrel,
-				 theinsn->reloc);
-      /* Turn off overflow checking in fixup_segment.  We'll do our
-	 own overflow checking in md_apply_fix.  This is necessary because
-	 the insn size is 4 and fixup_segment will signal an overflow for
-	 large 8 byte quantities.  */
-      fixP->fx_no_overflow = 1;
-      if (theinsn->reloc == BFD_RELOC_SPARC_OLO10)
-	fixP->tc_fix_data = theinsn->exp2.X_add_number;
+    char *toP;
+    fixS *fixP;
+    
+    if (!insn || !theinsn) {
+        return;
+    }
+    
+    toP = frag_more(4);
+    if (!toP) {
+        return;
     }
 
-  last_insn = insn;
-  last_opcode = theinsn->opcode;
+    if (INSN_BIG_ENDIAN) {
+        number_to_chars_bigendian(toP, theinsn->opcode, 4);
+    } else {
+        number_to_chars_littleendian(toP, theinsn->opcode, 4);
+    }
 
-  dwarf2_emit_insn (4);
+    if (theinsn->reloc != BFD_RELOC_NONE) {
+        fixP = fix_new_exp(frag_now,
+                          (toP - frag_now->fr_literal),
+                          4,
+                          &theinsn->exp,
+                          theinsn->pcrel,
+                          theinsn->reloc);
+        
+        if (fixP) {
+            fixP->fx_no_overflow = 1;
+            if (theinsn->reloc == BFD_RELOC_SPARC_OLO10) {
+                fixP->tc_fix_data = theinsn->exp2.X_add_number;
+            }
+        }
+    }
+
+    last_insn = insn;
+    last_opcode = theinsn->opcode;
+
+    dwarf2_emit_insn(4);
 }
 
 const char *
 md_atof (int type, char *litP, int *sizeP)
 {
+  if (!litP || !sizeP) {
+    return "Invalid parameter";
+  }
+  
   return ieee_md_atof (type, litP, sizeP, target_big_endian);
 }
 
@@ -3442,15 +2882,23 @@ md_atof (int type, char *litP, int *sizeP)
 void
 md_number_to_chars (char *buf, valueT val, int n)
 {
-  if (target_big_endian)
+  if (buf == NULL) {
+    return;
+  }
+
+  int use_big_endian = target_big_endian;
+  
+  if (!use_big_endian && target_little_endian_data) {
+    int is_debug_word = (n == 4 || n == 2);
+    int is_non_allocated = now_seg && (~now_seg->flags & SEC_ALLOC);
+    use_big_endian = is_debug_word && is_non_allocated;
+  }
+  
+  if (use_big_endian) {
     number_to_chars_bigendian (buf, val, n);
-  else if (target_little_endian_data
-	   && ((n == 4 || n == 2) && ~now_seg->flags & SEC_ALLOC))
-    /* Output debug words, which are not in allocated sections, as big
-       endian.  */
-    number_to_chars_bigendian (buf, val, n);
-  else if (target_little_endian_data || ! target_big_endian)
+  } else if (target_little_endian_data || !target_big_endian) {
     number_to_chars_littleendian (buf, val, n);
+  }
 }
 
 /* Apply a fixS to the frags, now that we know the value it ought to
@@ -3459,375 +2907,345 @@ md_number_to_chars (char *buf, valueT val, int n)
 void
 md_apply_fix (fixS *fixP, valueT *valP, segT segment ATTRIBUTE_UNUSED)
 {
+  if (!fixP || !valP) {
+    return;
+  }
+
   char *buf = fixP->fx_where + fixP->fx_frag->fr_literal;
   offsetT val = *valP;
   long insn;
 
   gas_assert (fixP->fx_r_type < BFD_RELOC_UNUSED);
 
-  fixP->fx_addnumber = val;	/* Remember value for emit_reloc.  */
+  fixP->fx_addnumber = val;
 
-  /* SPARC ELF relocations don't use an addend in the data field.  */
   if (fixP->fx_addsy != NULL)
     {
-      switch (fixP->fx_r_type)
-	{
-	case BFD_RELOC_SPARC_TLS_GD_HI22:
-	case BFD_RELOC_SPARC_TLS_GD_LO10:
-	case BFD_RELOC_SPARC_TLS_GD_ADD:
-	case BFD_RELOC_SPARC_TLS_GD_CALL:
-	case BFD_RELOC_SPARC_TLS_LDM_HI22:
-	case BFD_RELOC_SPARC_TLS_LDM_LO10:
-	case BFD_RELOC_SPARC_TLS_LDM_ADD:
-	case BFD_RELOC_SPARC_TLS_LDM_CALL:
-	case BFD_RELOC_SPARC_TLS_LDO_HIX22:
-	case BFD_RELOC_SPARC_TLS_LDO_LOX10:
-	case BFD_RELOC_SPARC_TLS_LDO_ADD:
-	case BFD_RELOC_SPARC_TLS_IE_HI22:
-	case BFD_RELOC_SPARC_TLS_IE_LO10:
-	case BFD_RELOC_SPARC_TLS_IE_LD:
-	case BFD_RELOC_SPARC_TLS_IE_LDX:
-	case BFD_RELOC_SPARC_TLS_IE_ADD:
-	case BFD_RELOC_SPARC_TLS_LE_HIX22:
-	case BFD_RELOC_SPARC_TLS_LE_LOX10:
-	case BFD_RELOC_SPARC_TLS_DTPMOD32:
-	case BFD_RELOC_SPARC_TLS_DTPMOD64:
-	case BFD_RELOC_SPARC_TLS_DTPOFF32:
-	case BFD_RELOC_SPARC_TLS_DTPOFF64:
-	case BFD_RELOC_SPARC_TLS_TPOFF32:
-	case BFD_RELOC_SPARC_TLS_TPOFF64:
-	  S_SET_THREAD_LOCAL (fixP->fx_addsy);
-
-	default:
-	  break;
-	}
-
+      if (is_tls_relocation(fixP->fx_r_type)) {
+        S_SET_THREAD_LOCAL (fixP->fx_addsy);
+      }
       return;
     }
 
-  /* This is a hack.  There should be a better way to
-     handle this.  Probably in terms of howto fields, once
-     we can look at these fixups in terms of howtos.  */
   if (fixP->fx_r_type == BFD_RELOC_32_PCREL_S2 && fixP->fx_addsy)
     val += fixP->fx_where + fixP->fx_frag->fr_address;
 
-  /* If this is a data relocation, just output VAL.  */
+  if (handle_data_relocation(fixP, buf, val)) {
+    return;
+  }
 
-  if (fixP->fx_r_type == BFD_RELOC_8)
-    {
-      md_number_to_chars (buf, val, 1);
-    }
-  else if (fixP->fx_r_type == BFD_RELOC_16
-	   || fixP->fx_r_type == BFD_RELOC_SPARC_UA16)
-    {
-      md_number_to_chars (buf, val, 2);
-    }
-  else if (fixP->fx_r_type == BFD_RELOC_32
-	   || fixP->fx_r_type == BFD_RELOC_SPARC_UA32
-	   || fixP->fx_r_type == BFD_RELOC_SPARC_REV32)
-    {
-      md_number_to_chars (buf, val, 4);
-    }
-  else if (fixP->fx_r_type == BFD_RELOC_64
-	   || fixP->fx_r_type == BFD_RELOC_SPARC_UA64)
-    {
-      md_number_to_chars (buf, val, 8);
-    }
-  else if (fixP->fx_r_type == BFD_RELOC_VTABLE_INHERIT
-           || fixP->fx_r_type == BFD_RELOC_VTABLE_ENTRY)
-    {
-      fixP->fx_done = 0;
-      return;
-    }
+  if (INSN_BIG_ENDIAN)
+    insn = bfd_getb32 (buf);
   else
+    insn = bfd_getl32 (buf);
+
+  switch (fixP->fx_r_type)
     {
-      /* It's a relocation against an instruction.  */
+    case BFD_RELOC_32_PCREL_S2:
+      insn = handle_pcrel_s2_relocation(fixP, buf, val, insn);
+      break;
 
-      if (INSN_BIG_ENDIAN)
-	insn = bfd_getb32 (buf);
-      else
-	insn = bfd_getl32 (buf);
+    case BFD_RELOC_SPARC_11:
+      if (!in_signed_range(val, 0x7ff))
+        as_bad_where(fixP->fx_file, fixP->fx_line, _("relocation overflow"));
+      insn |= val & 0x7ff;
+      break;
 
-      switch (fixP->fx_r_type)
-	{
-	case BFD_RELOC_32_PCREL_S2:
-	  val = val >> 2;
-	  /* FIXME: This increment-by-one deserves a comment of why it's
-	     being done!  */
-	  if (! sparc_pic_code
-	      || fixP->fx_addsy == NULL
-	      || symbol_section_p (fixP->fx_addsy))
-	    ++val;
+    case BFD_RELOC_SPARC_10:
+      if (!in_signed_range(val, 0x3ff))
+        as_bad_where(fixP->fx_file, fixP->fx_line, _("relocation overflow"));
+      insn |= val & 0x3ff;
+      break;
 
-	  insn |= val & 0x3fffffff;
+    case BFD_RELOC_SPARC_7:
+      if (!in_bitfield_range(val, 0x7f))
+        as_bad_where(fixP->fx_file, fixP->fx_line, _("relocation overflow"));
+      insn |= val & 0x7f;
+      break;
 
-	  /* See if we have a delay slot.  In that case we attempt to
-             optimize several cases transforming CALL instructions
-             into branches.  But we can only do that if the relocation
-             can be completely resolved here, i.e. if no undefined
-             symbol is associated with it.  */
-	  if (sparc_relax && fixP->fx_addsy == NULL
-	      && fixP->fx_where + 8 <= fixP->fx_frag->fr_fix)
-	    {
-#define G0		0
-#define O7		15
-#define XCC		(2 << 20)
-#define COND(x)		(((x)&0xf)<<25)
-#define CONDA		COND(0x8)
-#define INSN_BPA	(F2(0,1) | CONDA | BPRED | XCC)
-#define INSN_BA		(F2(0,2) | CONDA)
-#define INSN_OR		F3(2, 0x2, 0)
-#define INSN_NOP	F2(0,4)
+    case BFD_RELOC_SPARC_6:
+      if (!in_bitfield_range(val, 0x3f))
+        as_bad_where(fixP->fx_file, fixP->fx_line, _("relocation overflow"));
+      insn |= val & 0x3f;
+      break;
 
-	      long delay;
+    case BFD_RELOC_SPARC_5:
+      if (!in_bitfield_range(val, 0x1f))
+        as_bad_where(fixP->fx_file, fixP->fx_line, _("relocation overflow"));
+      insn |= val & 0x1f;
+      break;
 
-	      /* If the instruction is a call with either:
-		 restore
-		 arithmetic instruction with rd == %o7
-		 where rs1 != %o7 and rs2 if it is register != %o7
-		 then we can optimize if the call destination is near
-		 by changing the call into a branch always.  */
-	      if (INSN_BIG_ENDIAN)
-		delay = bfd_getb32 (buf + 4);
-	      else
-		delay = bfd_getl32 (buf + 4);
-	      if ((insn & OP (~0)) != OP (1) || (delay & OP (~0)) != OP (2))
-		break;
-	      if ((delay & OP3 (~0)) != OP3 (0x3d) /* Restore.  */
-		  && ((delay & OP3 (0x28)) != 0 /* Arithmetic.  */
-		      || ((delay & RD (~0)) != RD (O7))))
-		break;
-	      if ((delay & RS1 (~0)) == RS1 (O7)
-		  || ((delay & F3I (~0)) == 0
-		      && (delay & RS2 (~0)) == RS2 (O7)))
-		break;
-	      /* Ensure the branch will fit into simm22.  */
-	      if ((val & 0x3fe00000)
-		  && (val & 0x3fe00000) != 0x3fe00000)
-		break;
-	      /* Check if the arch is v9 and branch will fit
-		 into simm19.  */
-	      if (((val & 0x3c0000) == 0
-		   || (val & 0x3c0000) == 0x3c0000)
-		  && (sparc_arch_size == 64
-		      || current_architecture >= SPARC_OPCODE_ARCH_V9))
-		/* ba,pt %xcc  */
-		insn = INSN_BPA | (val & 0x7ffff);
-	      else
-		/* ba  */
-		insn = INSN_BA | (val & 0x3fffff);
-	      if (fixP->fx_where >= 4
-		  && ((delay & (0xffffffff ^ RS1 (~0)))
-		      == (INSN_OR | RD (O7) | RS2 (G0))))
-		{
-		  long setter;
-		  int reg;
+    case BFD_RELOC_SPARC_WDISP10:
+      insn = handle_wdisp10_relocation(fixP, val, insn);
+      break;
 
-		  if (INSN_BIG_ENDIAN)
-		    setter = bfd_getb32 (buf - 4);
-		  else
-		    setter = bfd_getl32 (buf - 4);
-		  if ((setter & (0xffffffff ^ RD (~0)))
-		      != (INSN_OR | RS1 (O7) | RS2 (G0)))
-		    break;
-		  /* The sequence was
-		     or %o7, %g0, %rN
-		     call foo
-		     or %rN, %g0, %o7
+    case BFD_RELOC_SPARC_WDISP16:
+      insn = handle_wdisp16_relocation(fixP, val, insn);
+      break;
 
-		     If call foo was replaced with ba, replace
-		     or %rN, %g0, %o7 with nop.  */
-		  reg = (delay & RS1 (~0)) >> 14;
-		  if (reg != ((setter & RD (~0)) >> 25)
-		      || reg == G0 || reg == O7)
-		    break;
+    case BFD_RELOC_SPARC_WDISP19:
+      insn = handle_wdisp19_relocation(fixP, val, insn);
+      break;
 
-		  if (INSN_BIG_ENDIAN)
-		    bfd_putb32 (INSN_NOP, buf + 4);
-		  else
-		    bfd_putl32 (INSN_NOP, buf + 4);
-		}
-	    }
-	  break;
+    case BFD_RELOC_SPARC_HH22:
+      val = BSR(val, 32);
+    case BFD_RELOC_SPARC_LM22:
+    case BFD_RELOC_HI22:
+      insn = handle_hi22_relocation(fixP, val, insn);
+      break;
 
-	case BFD_RELOC_SPARC_11:
-	  if (! in_signed_range (val, 0x7ff))
-	    as_bad_where (fixP->fx_file, fixP->fx_line,
-			  _("relocation overflow"));
-	  insn |= val & 0x7ff;
-	  break;
+    case BFD_RELOC_SPARC22:
+      if (val & ~0x003fffff)
+        as_bad_where(fixP->fx_file, fixP->fx_line, _("relocation overflow"));
+      insn |= (val & 0x3fffff);
+      break;
 
-	case BFD_RELOC_SPARC_10:
-	  if (! in_signed_range (val, 0x3ff))
-	    as_bad_where (fixP->fx_file, fixP->fx_line,
-			  _("relocation overflow"));
-	  insn |= val & 0x3ff;
-	  break;
+    case BFD_RELOC_SPARC_HM10:
+      val = BSR(val, 32);
+    case BFD_RELOC_LO10:
+      insn = handle_lo10_relocation(fixP, val, insn);
+      break;
 
-	case BFD_RELOC_SPARC_7:
-	  if (! in_bitfield_range (val, 0x7f))
-	    as_bad_where (fixP->fx_file, fixP->fx_line,
-			  _("relocation overflow"));
-	  insn |= val & 0x7f;
-	  break;
+    case BFD_RELOC_SPARC_OLO10:
+      val &= 0x3ff;
+      val += fixP->tc_fix_data;
+    case BFD_RELOC_SPARC13:
+      if (!in_signed_range(val, 0x1fff))
+        as_bad_where(fixP->fx_file, fixP->fx_line, _("relocation overflow"));
+      insn |= val & 0x1fff;
+      break;
 
-	case BFD_RELOC_SPARC_6:
-	  if (! in_bitfield_range (val, 0x3f))
-	    as_bad_where (fixP->fx_file, fixP->fx_line,
-			  _("relocation overflow"));
-	  insn |= val & 0x3f;
-	  break;
+    case BFD_RELOC_SPARC_WDISP22:
+      val = (val >> 2) + 1;
+    case BFD_RELOC_SPARC_BASE22:
+      insn |= val & 0x3fffff;
+      break;
 
-	case BFD_RELOC_SPARC_5:
-	  if (! in_bitfield_range (val, 0x1f))
-	    as_bad_where (fixP->fx_file, fixP->fx_line,
-			  _("relocation overflow"));
-	  insn |= val & 0x1f;
-	  break;
+    case BFD_RELOC_SPARC_H34:
+    case BFD_RELOC_SPARC_H44:
+    case BFD_RELOC_SPARC_M44:
+    case BFD_RELOC_SPARC_L44:
+      insn = handle_sparc_h_relocation(fixP, val, insn);
+      break;
 
-	case BFD_RELOC_SPARC_WDISP10:
-	  if ((val & 3)
-	      || val >= 0x007fc
-	      || val <= -(offsetT) 0x808)
-	    as_bad_where (fixP->fx_file, fixP->fx_line,
-			  _("relocation overflow"));
-	  /* FIXME: The +1 deserves a comment.  */
-	  val = (val >> 2) + 1;
-	  insn |= ((val & 0x300) << 11)
-	    | ((val & 0xff) << 5);
-	  break;
+    case BFD_RELOC_SPARC_HIX22:
+      if (!fixP->fx_addsy)
+        {
+          val ^= ~(offsetT) 0;
+          insn |= (val >> 10) & 0x3fffff;
+        }
+      break;
 
-	case BFD_RELOC_SPARC_WDISP16:
-	  if ((val & 3)
-	      || val >= 0x1fffc
-	      || val <= -(offsetT) 0x20008)
-	    as_bad_where (fixP->fx_file, fixP->fx_line,
-			  _("relocation overflow"));
-	  /* FIXME: The +1 deserves a comment.  */
-	  val = (val >> 2) + 1;
-	  insn |= ((val & 0xc000) << 6) | (val & 0x3fff);
-	  break;
+    case BFD_RELOC_SPARC_LOX10:
+      if (!fixP->fx_addsy)
+        insn |= 0x1c00 | (val & 0x3ff);
+      break;
 
-	case BFD_RELOC_SPARC_WDISP19:
-	  if ((val & 3)
-	      || val >= 0xffffc
-	      || val <= -(offsetT) 0x100008)
-	    as_bad_where (fixP->fx_file, fixP->fx_line,
-			  _("relocation overflow"));
-	  /* FIXME: The +1 deserves a comment.  */
-	  val = (val >> 2) + 1;
-	  insn |= val & 0x7ffff;
-	  break;
-
-	case BFD_RELOC_SPARC_HH22:
-	  val = BSR (val, 32);
-	  /* Fall through.  */
-
-	case BFD_RELOC_SPARC_LM22:
-	case BFD_RELOC_HI22:
-	  if (!fixP->fx_addsy)
-	    insn |= (val >> 10) & 0x3fffff;
-	  else
-	    /* FIXME: Need comment explaining why we do this.  */
-	    insn &= ~0xffff;
-	  break;
-
-	case BFD_RELOC_SPARC22:
-	  if (val & ~0x003fffff)
-	    as_bad_where (fixP->fx_file, fixP->fx_line,
-			  _("relocation overflow"));
-	  insn |= (val & 0x3fffff);
-	  break;
-
-	case BFD_RELOC_SPARC_HM10:
-	  val = BSR (val, 32);
-	  /* Fall through.  */
-
-	case BFD_RELOC_LO10:
-	  if (!fixP->fx_addsy)
-	    insn |= val & 0x3ff;
-	  else
-	    /* FIXME: Need comment explaining why we do this.  */
-	    insn &= ~0xff;
-	  break;
-
-	case BFD_RELOC_SPARC_OLO10:
-	  val &= 0x3ff;
-	  val += fixP->tc_fix_data;
-	  /* Fall through.  */
-
-	case BFD_RELOC_SPARC13:
-	  if (! in_signed_range (val, 0x1fff))
-	    as_bad_where (fixP->fx_file, fixP->fx_line,
-			  _("relocation overflow"));
-	  insn |= val & 0x1fff;
-	  break;
-
-	case BFD_RELOC_SPARC_WDISP22:
-	  val = (val >> 2) + 1;
-	  /* Fall through.  */
-	case BFD_RELOC_SPARC_BASE22:
-	  insn |= val & 0x3fffff;
-	  break;
-
-	case BFD_RELOC_SPARC_H34:
-	  if (!fixP->fx_addsy)
-	    {
-	      bfd_vma tval = val;
-	      tval >>= 12;
-	      insn |= tval & 0x3fffff;
-	    }
-	  break;
-
-	case BFD_RELOC_SPARC_H44:
-	  if (!fixP->fx_addsy)
-	    {
-	      bfd_vma tval = val;
-	      tval >>= 22;
-	      insn |= tval & 0x3fffff;
-	    }
-	  break;
-
-	case BFD_RELOC_SPARC_M44:
-	  if (!fixP->fx_addsy)
-	    insn |= (val >> 12) & 0x3ff;
-	  break;
-
-	case BFD_RELOC_SPARC_L44:
-	  if (!fixP->fx_addsy)
-	    insn |= val & 0xfff;
-	  break;
-
-	case BFD_RELOC_SPARC_HIX22:
-	  if (!fixP->fx_addsy)
-	    {
-	      val ^= ~(offsetT) 0;
-	      insn |= (val >> 10) & 0x3fffff;
-	    }
-	  break;
-
-	case BFD_RELOC_SPARC_LOX10:
-	  if (!fixP->fx_addsy)
-	    insn |= 0x1c00 | (val & 0x3ff);
-	  break;
-
-	case BFD_RELOC_NONE:
-	default:
-	  as_bad_where (fixP->fx_file, fixP->fx_line,
-			_("bad or unhandled relocation type: 0x%02x"),
-			fixP->fx_r_type);
-	  break;
-	}
-
-      if (INSN_BIG_ENDIAN)
-	bfd_putb32 (insn, buf);
-      else
-	bfd_putl32 (insn, buf);
+    case BFD_RELOC_NONE:
+    default:
+      as_bad_where(fixP->fx_file, fixP->fx_line,
+                   _("bad or unhandled relocation type: 0x%02x"),
+                   fixP->fx_r_type);
+      break;
     }
 
-  /* Are we finished with this relocation now?  */
+  if (INSN_BIG_ENDIAN)
+    bfd_putb32(insn, buf);
+  else
+    bfd_putl32(insn, buf);
+
   if (fixP->fx_addsy == 0 && !fixP->fx_pcrel)
     fixP->fx_done = 1;
+}
+
+static int
+is_tls_relocation(bfd_reloc_code_real_type r_type)
+{
+  return (r_type >= BFD_RELOC_SPARC_TLS_GD_HI22 && 
+          r_type <= BFD_RELOC_SPARC_TLS_TPOFF64);
+}
+
+static int
+handle_data_relocation(fixS *fixP, char *buf, offsetT val)
+{
+  switch (fixP->fx_r_type)
+    {
+    case BFD_RELOC_8:
+      md_number_to_chars(buf, val, 1);
+      return 1;
+    case BFD_RELOC_16:
+    case BFD_RELOC_SPARC_UA16:
+      md_number_to_chars(buf, val, 2);
+      return 1;
+    case BFD_RELOC_32:
+    case BFD_RELOC_SPARC_UA32:
+    case BFD_RELOC_SPARC_REV32:
+      md_number_to_chars(buf, val, 4);
+      return 1;
+    case BFD_RELOC_64:
+    case BFD_RELOC_SPARC_UA64:
+      md_number_to_chars(buf, val, 8);
+      return 1;
+    case BFD_RELOC_VTABLE_INHERIT:
+    case BFD_RELOC_VTABLE_ENTRY:
+      fixP->fx_done = 0;
+      return 1;
+    default:
+      return 0;
+    }
+}
+
+static long
+handle_pcrel_s2_relocation(fixS *fixP, char *buf, offsetT val, long insn)
+{
+  val = val >> 2;
+  if (!sparc_pic_code || fixP->fx_addsy == NULL || symbol_section_p(fixP->fx_addsy))
+    ++val;
+
+  insn |= val & 0x3fffffff;
+
+  if (sparc_relax && fixP->fx_addsy == NULL &&
+      fixP->fx_where + 8 <= fixP->fx_frag->fr_fix)
+    {
+      insn = optimize_call_to_branch(fixP, buf, val, insn);
+    }
+  return insn;
+}
+
+static long
+optimize_call_to_branch(fixS *fixP, char *buf, offsetT val, long insn)
+{
+  long delay;
+
+  if (INSN_BIG_ENDIAN)
+    delay = bfd_getb32(buf + 4);
+  else
+    delay = bfd_getl32(buf + 4);
+
+  if ((insn & OP(~0)) != OP(1) || (delay & OP(~0)) != OP(2))
+    return insn;
+
+  if ((delay & OP3(~0)) != OP3(0x3d) &&
+      ((delay & OP3(0x28)) != 0 || ((delay & RD(~0)) != RD(O7))))
+    return insn;
+
+  if ((delay & RS1(~0)) == RS1(O7) ||
+      ((delay & F3I(~0)) == 0 && (delay & RS2(~0)) == RS2(O7)))
+    return insn;
+
+  if ((val & 0x3fe00000) && (val & 0x3fe00000) != 0x3fe00000)
+    return insn;
+
+  if (((val & 0x3c0000) == 0 || (val & 0x3c0000) == 0x3c0000) &&
+      (sparc_arch_size == 64 || current_architecture >= SPARC_OPCODE_ARCH_V9))
+    insn = INSN_BPA | (val & 0x7ffff);
+  else
+    insn = INSN_BA | (val & 0x3fffff);
+
+  handle_delay_slot_optimization(fixP, buf, delay);
+  return insn;
+}
+
+static void
+handle_delay_slot_optimization(fixS *fixP, char *buf, long delay)
+{
+  if (fixP->fx_where >= 4 &&
+      ((delay & (0xffffffff ^ RS1(~0))) == (INSN_OR | RD(O7) | RS2(G0))))
+    {
+      long setter;
+      int reg;
+
+      if (INSN_BIG_ENDIAN)
+        setter = bfd_getb32(buf - 4);
+      else
+        setter = bfd_getl32(buf - 4);
+
+      if ((setter & (0xffffffff ^ RD(~0))) != (INSN_OR | RS1(O7) | RS2(G0)))
+        return;
+
+      reg = (delay & RS1(~0)) >> 14;
+      if (reg != ((setter & RD(~0)) >> 25) || reg == G0 || reg == O7)
+        return;
+
+      if (INSN_BIG_ENDIAN)
+        bfd_putb32(INSN_NOP, buf + 4);
+      else
+        bfd_putl32(INSN_NOP, buf + 4);
+    }
+}
+
+static long
+handle_wdisp10_relocation(fixS *fixP, offsetT val, long insn)
+{
+  if ((val & 3) || val >= 0x007fc || val <= -(offsetT) 0x808)
+    as_bad_where(fixP->fx_file, fixP->fx_line, _("relocation overflow"));
+  val = (val >> 2) + 1;
+  insn |= ((val & 0x300) << 11) | ((val & 0xff) << 5);
+  return insn;
+}
+
+static long
+handle_wdisp16_relocation(fixS *fixP, offsetT val, long insn)
+{
+  if ((val & 3) || val >= 0x1fffc || val <= -(offsetT) 0x20008)
+    as_bad_where(fixP->fx_file, fixP->fx_line, _("relocation overflow"));
+  val = (val >> 2) + 1;
+  insn |= ((val & 0xc000) << 6) | (val & 0x3fff);
+  return insn;
+}
+
+static long
+handle_wdisp19_relocation(fixS *fixP, offsetT val, long insn)
+{
+  if ((val & 3) || val >= 0xffffc || val <= -(offsetT) 0x100008)
+    as_bad_where(fixP->fx_file, fixP->fx_line, _("relocation overflow"));
+  val = (val >> 2) + 1;
+  insn |= val & 0x7ffff;
+  return insn;
+}
+
+static long
+handle_hi22_relocation(fixS *fixP, offsetT val, long insn)
+{
+  if (!fixP->fx_addsy)
+    insn |= (val >> 10) & 0x3fffff;
+  else
+    insn &= ~0xffff;
+  return insn;
+}
+
+static long
+handle_lo10_relocation(fixS *fixP, offsetT val, long insn)
+{
+  if (!fixP->fx_addsy)
+    insn |= val & 0x3ff;
+  else
+    insn &= ~0xff;
+  return insn;
+}
+
+static long
+handle_sparc_h_relocation(fixS *fixP, offsetT val, long insn)
+{
+  if (!fixP->fx_addsy)
+    {
+      switch (fixP->fx_r_type)
+        {
+        case BFD_RELOC_SPARC_H34:
+          insn |= (val >> 12) & 0x3fffff;
+          break;
+        case BFD_RELOC_SPARC_H44:
+          insn |= (val >> 22) & 0x3fffff;
+          break;
+        case BFD_RELOC_SPARC_M44:
+          insn |= (val >> 12) & 0x3ff;
+          break;
+        case BFD_RELOC_SPARC_L44:
+          insn |= val & 0xfff;
+          break;
+        }
+    }
+  return insn;
 }
 
 /* Translate internal representation of relocation info to BFD target
@@ -3847,35 +3265,46 @@ tc_gen_reloc (asection *section, fixS *fixp)
   *reloc->sym_ptr_ptr = symbol_get_bfdsym (fixp->fx_addsy);
   reloc->address = fixp->fx_frag->fr_address + fixp->fx_where;
 
-  switch (fixp->fx_r_type)
-    {
+  code = get_reloc_code(fixp);
+  if (code == BFD_RELOC_NONE) {
+    return NULL;
+  }
+
+  code = adjust_for_pic(code, fixp);
+  code = adjust_for_debugging(code, section);
+
+  reloc->howto = get_reloc_howto(code);
+  if (reloc->howto == 0) {
+    as_bad_where (fixp->fx_file, fixp->fx_line,
+                  _("internal error: can't export reloc type %d (`%s')"),
+                  fixp->fx_r_type, bfd_get_reloc_code_name (code));
+    relocs[0] = NULL;
+    return relocs;
+  }
+
+  reloc->addend = calculate_addend(code, fixp, section);
+
+  if (code == BFD_RELOC_SPARC_OLO10) {
+    create_olo10_second_reloc(&relocs[1], fixp);
+    relocs[2] = NULL;
+  }
+
+  return relocs;
+}
+
+static bfd_reloc_code_real_type
+get_reloc_code(fixS *fixp)
+{
+  switch (fixp->fx_r_type) {
     case BFD_RELOC_8:
     case BFD_RELOC_16:
     case BFD_RELOC_32:
     case BFD_RELOC_64:
-      if (fixp->fx_pcrel)
-	{
-	  switch (fixp->fx_size)
-	    {
-	    default:
-	      as_bad_where (fixp->fx_file, fixp->fx_line,
-			    _("can not do %d byte pc-relative relocation"),
-			    fixp->fx_size);
-	      code = fixp->fx_r_type;
-	      fixp->fx_pcrel = 0;
-	      break;
-	    case 1: code = BFD_RELOC_8_PCREL;  break;
-	    case 2: code = BFD_RELOC_16_PCREL; break;
-	    case 4: code = BFD_RELOC_32_PCREL; break;
-#ifdef BFD64
-	    case 8: code = BFD_RELOC_64_PCREL; break;
-#endif
-	    }
-	  if (fixp->fx_pcrel)
-	    fixp->fx_addnumber = fixp->fx_offset;
-	  break;
-	}
-      /* Fall through.  */
+      if (fixp->fx_pcrel) {
+        return get_pcrel_code(fixp);
+      }
+      return fixp->fx_r_type;
+    
     case BFD_RELOC_HI22:
     case BFD_RELOC_LO10:
     case BFD_RELOC_32_PCREL_S2:
@@ -3941,122 +3370,167 @@ tc_gen_reloc (asection *section, fixS *fixp)
     case BFD_RELOC_SPARC_GOTDATA_OP_HIX22:
     case BFD_RELOC_SPARC_GOTDATA_OP_LOX10:
     case BFD_RELOC_SPARC_GOTDATA_OP:
-      code = fixp->fx_r_type;
-      break;
+      return fixp->fx_r_type;
+    
     default:
-      abort ();
-      return NULL;
-    }
+      return BFD_RELOC_NONE;
+  }
+}
 
-  /* If we are generating PIC code, we need to generate a different
-     set of relocs.  */
-
-#define GOT_NAME "_GLOBAL_OFFSET_TABLE_"
-#ifdef TE_VXWORKS
-#define GOTT_BASE "__GOTT_BASE__"
-#define GOTT_INDEX "__GOTT_INDEX__"
+static bfd_reloc_code_real_type
+get_pcrel_code(fixS *fixp)
+{
+  bfd_reloc_code_real_type code;
+  
+  switch (fixp->fx_size) {
+    case 1: code = BFD_RELOC_8_PCREL; break;
+    case 2: code = BFD_RELOC_16_PCREL; break;
+    case 4: code = BFD_RELOC_32_PCREL; break;
+#ifdef BFD64
+    case 8: code = BFD_RELOC_64_PCREL; break;
 #endif
-
-  /* This code must be parallel to tc_fix_adjustable.  */
-
-  if (sparc_pic_code)
-    {
-      switch (code)
-	{
-	case BFD_RELOC_32_PCREL_S2:
-	  if (generic_force_reloc (fixp))
-	    code = BFD_RELOC_SPARC_WPLT30;
-	  break;
-	case BFD_RELOC_HI22:
-	  code = BFD_RELOC_SPARC_GOT22;
-	  if (fixp->fx_addsy != NULL)
-	    {
-	      if (strcmp (S_GET_NAME (fixp->fx_addsy), GOT_NAME) == 0)
-		code = BFD_RELOC_SPARC_PC22;
-#ifdef TE_VXWORKS
-	      if (strcmp (S_GET_NAME (fixp->fx_addsy), GOTT_BASE) == 0
-		  || strcmp (S_GET_NAME (fixp->fx_addsy), GOTT_INDEX) == 0)
-		code = BFD_RELOC_HI22; /* Unchanged.  */
-#endif
-	    }
-	  break;
-	case BFD_RELOC_LO10:
-	  code = BFD_RELOC_SPARC_GOT10;
-	  if (fixp->fx_addsy != NULL)
-	    {
-	      if (strcmp (S_GET_NAME (fixp->fx_addsy), GOT_NAME) == 0)
-		code = BFD_RELOC_SPARC_PC10;
-#ifdef TE_VXWORKS
-	      if (strcmp (S_GET_NAME (fixp->fx_addsy), GOTT_BASE) == 0
-		  || strcmp (S_GET_NAME (fixp->fx_addsy), GOTT_INDEX) == 0)
-		code = BFD_RELOC_LO10; /* Unchanged.  */
-#endif
-	    }
-	  break;
-	case BFD_RELOC_SPARC13:
-	  code = BFD_RELOC_SPARC_GOT13;
-	  break;
-	default:
-	  break;
-	}
-    }
-
-  /* Nothing is aligned in DWARF debugging sections.  */
-  if (bfd_section_flags (section) & SEC_DEBUGGING)
-    switch (code)
-      {
-      case BFD_RELOC_16: code = BFD_RELOC_SPARC_UA16; break;
-      case BFD_RELOC_32: code = BFD_RELOC_SPARC_UA32; break;
-      case BFD_RELOC_64: code = BFD_RELOC_SPARC_UA64; break;
-      default: break;
-      }
-
-  if (code == BFD_RELOC_SPARC_OLO10)
-    reloc->howto = bfd_reloc_type_lookup (stdoutput, BFD_RELOC_LO10);
-  else
-    reloc->howto = bfd_reloc_type_lookup (stdoutput, code);
-  if (reloc->howto == 0)
-    {
+    default:
       as_bad_where (fixp->fx_file, fixp->fx_line,
-		    _("internal error: can't export reloc type %d (`%s')"),
-		    fixp->fx_r_type, bfd_get_reloc_code_name (code));
-      relocs[0] = NULL;
-      return relocs;
+                    _("can not do %d byte pc-relative relocation"),
+                    fixp->fx_size);
+      code = fixp->fx_r_type;
+      fixp->fx_pcrel = 0;
+      return code;
+  }
+  
+  fixp->fx_addnumber = fixp->fx_offset;
+  return code;
+}
+
+static bfd_reloc_code_real_type
+adjust_for_pic(bfd_reloc_code_real_type code, fixS *fixp)
+{
+  if (!sparc_pic_code) {
+    return code;
+  }
+
+  switch (code) {
+    case BFD_RELOC_32_PCREL_S2:
+      if (generic_force_reloc (fixp)) {
+        code = BFD_RELOC_SPARC_WPLT30;
+      }
+      break;
+    case BFD_RELOC_HI22:
+      code = BFD_RELOC_SPARC_GOT22;
+      if (fixp->fx_addsy != NULL) {
+        code = adjust_hi22_for_symbols(code, fixp);
+      }
+      break;
+    case BFD_RELOC_LO10:
+      code = BFD_RELOC_SPARC_GOT10;
+      if (fixp->fx_addsy != NULL) {
+        code = adjust_lo10_for_symbols(code, fixp);
+      }
+      break;
+    case BFD_RELOC_SPARC13:
+      code = BFD_RELOC_SPARC_GOT13;
+      break;
+  }
+  
+  return code;
+}
+
+static bfd_reloc_code_real_type
+adjust_hi22_for_symbols(bfd_reloc_code_real_type code, fixS *fixp)
+{
+  const char *name = S_GET_NAME(fixp->fx_addsy);
+  
+  if (strcmp(name, "_GLOBAL_OFFSET_TABLE_") == 0) {
+    return BFD_RELOC_SPARC_PC22;
+  }
+  
+#ifdef TE_VXWORKS
+  if (strcmp(name, "__GOTT_BASE__") == 0 || strcmp(name, "__GOTT_INDEX__") == 0) {
+    return BFD_RELOC_HI22;
+  }
+#endif
+  
+  return code;
+}
+
+static bfd_reloc_code_real_type
+adjust_lo10_for_symbols(bfd_reloc_code_real_type code, fixS *fixp)
+{
+  const char *name = S_GET_NAME(fixp->fx_addsy);
+  
+  if (strcmp(name, "_GLOBAL_OFFSET_TABLE_") == 0) {
+    return BFD_RELOC_SPARC_PC10;
+  }
+  
+#ifdef TE_VXWORKS
+  if (strcmp(name, "__GOTT_BASE__") == 0 || strcmp(name, "__GOTT_INDEX__") == 0) {
+    return BFD_RELOC_LO10;
+  }
+#endif
+  
+  return code;
+}
+
+static bfd_reloc_code_real_type
+adjust_for_debugging(bfd_reloc_code_real_type code, asection *section)
+{
+  if (!(bfd_section_flags(section) & SEC_DEBUGGING)) {
+    return code;
+  }
+
+  switch (code) {
+    case BFD_RELOC_16: return BFD_RELOC_SPARC_UA16;
+    case BFD_RELOC_32: return BFD_RELOC_SPARC_UA32;
+    case BFD_RELOC_64: return BFD_RELOC_SPARC_UA64;
+    default: return code;
+  }
+}
+
+static reloc_howto_type *
+get_reloc_howto(bfd_reloc_code_real_type code)
+{
+  if (code == BFD_RELOC_SPARC_OLO10) {
+    return bfd_reloc_type_lookup(stdoutput, BFD_RELOC_LO10);
+  }
+  return bfd_reloc_type_lookup(stdoutput, code);
+}
+
+static bfd_vma
+calculate_addend(bfd_reloc_code_real_type code, fixS *fixp, asection *section)
+{
+  if (is_branch_reloc(code)) {
+    if (symbol_section_p(fixp->fx_addsy)) {
+      return section->vma + fixp->fx_addnumber + md_pcrel_from(fixp);
     }
+    return fixp->fx_offset;
+  }
+  return fixp->fx_addnumber;
+}
 
-  /* @@ Why fx_addnumber sometimes and fx_offset other times?  */
-  if (code != BFD_RELOC_32_PCREL_S2
-      && code != BFD_RELOC_SPARC_WDISP22
-      && code != BFD_RELOC_SPARC_WDISP16
-      && code != BFD_RELOC_SPARC_WDISP19
-      && code != BFD_RELOC_SPARC_WDISP10
-      && code != BFD_RELOC_SPARC_WPLT30
-      && code != BFD_RELOC_SPARC_TLS_GD_CALL
-      && code != BFD_RELOC_SPARC_TLS_LDM_CALL)
-    reloc->addend = fixp->fx_addnumber;
-  else if (symbol_section_p (fixp->fx_addsy))
-    reloc->addend = (section->vma
-		     + fixp->fx_addnumber
-		     + md_pcrel_from (fixp));
-  else
-    reloc->addend = fixp->fx_offset;
+static int
+is_branch_reloc(bfd_reloc_code_real_type code)
+{
+  return (code == BFD_RELOC_32_PCREL_S2 ||
+          code == BFD_RELOC_SPARC_WDISP22 ||
+          code == BFD_RELOC_SPARC_WDISP16 ||
+          code == BFD_RELOC_SPARC_WDISP19 ||
+          code == BFD_RELOC_SPARC_WDISP10 ||
+          code == BFD_RELOC_SPARC_WPLT30 ||
+          code == BFD_RELOC_SPARC_TLS_GD_CALL ||
+          code == BFD_RELOC_SPARC_TLS_LDM_CALL);
+}
 
-  /* We expand R_SPARC_OLO10 to R_SPARC_LO10 and R_SPARC_13
-     on the same location.  */
-  if (code == BFD_RELOC_SPARC_OLO10)
-    {
-      reloc = notes_alloc (sizeof (arelent));
-      reloc->sym_ptr_ptr = notes_alloc (sizeof (asymbol *));
-      relocs[1] = reloc;
-      relocs[2] = NULL;
-      *reloc->sym_ptr_ptr
-	= symbol_get_bfdsym (section_symbol (absolute_section));
-      reloc->address = fixp->fx_frag->fr_address + fixp->fx_where;
-      reloc->howto = bfd_reloc_type_lookup (stdoutput, BFD_RELOC_SPARC13);
-      reloc->addend = fixp->tc_fix_data;
-    }
-
-  return relocs;
+static void
+create_olo10_second_reloc(arelent **reloc_ptr, fixS *fixp)
+{
+  arelent *reloc = notes_alloc(sizeof(arelent));
+  reloc->sym_ptr_ptr = notes_alloc(sizeof(asymbol *));
+  *reloc_ptr = reloc;
+  
+  *reloc->sym_ptr_ptr = symbol_get_bfdsym(section_symbol(absolute_section));
+  reloc->address = fixp->fx_frag->fr_address + fixp->fx_where;
+  reloc->howto = bfd_reloc_type_lookup(stdoutput, BFD_RELOC_SPARC13);
+  reloc->addend = fixp->tc_fix_data;
 }
 
 /* We have no need to default values of symbols.  */
@@ -4064,14 +3538,15 @@ tc_gen_reloc (asection *section, fixS *fixp)
 symbolS *
 md_undefined_symbol (char *name ATTRIBUTE_UNUSED)
 {
-  return 0;
+  return NULL;
 }
 
 /* Round up a section size to the appropriate boundary.  */
 
 valueT
-md_section_align (segT segment ATTRIBUTE_UNUSED, valueT size)
+md_section_align (segT segment, valueT size)
 {
+  (void)segment;
   return size;
 }
 
@@ -4084,8 +3559,11 @@ md_pcrel_from (fixS *fixP)
 {
   long ret;
 
+  if (fixP == NULL)
+    return 0;
+
   ret = fixP->fx_where + fixP->fx_frag->fr_address;
-  if (! sparc_pic_code
+  if (!sparc_pic_code
       || fixP->fx_addsy == NULL
       || symbol_section_p (fixP->fx_addsy))
     ret += fixP->fx_size;
@@ -4103,8 +3581,12 @@ mylog2 (int value)
   if (value <= 0)
     return -1;
 
-  for (shift = 0; (value & 1) == 0; value >>= 1)
-    ++shift;
+  shift = 0;
+  while ((value & 1) == 0)
+    {
+      value >>= 1;
+      shift++;
+    }
 
   return (value == 1) ? shift : -1;
 }
@@ -4117,12 +3599,18 @@ s_reserve (int ignore ATTRIBUTE_UNUSED)
   char *name;
   char *p;
   char c;
-  int align;
+  int align = 0;
   int size;
   int temp;
   symbolS *symbolP;
 
   c = get_symbol_name (&name);
+  if (!name)
+    {
+      ignore_rest_of_line ();
+      return;
+    }
+
   p = input_line_pointer;
   restore_line_pointer (c);
   SKIP_WHITESPACE ();
@@ -4136,21 +3624,23 @@ s_reserve (int ignore ATTRIBUTE_UNUSED)
 
   ++input_line_pointer;
 
-  if ((size = get_absolute_expression ()) < 0)
+  size = get_absolute_expression ();
+  if (size < 0)
     {
       as_bad (_("BSS length (%d.) <0! Ignored."), size);
       ignore_rest_of_line ();
       return;
-    }				/* Bad length.  */
+    }
 
-  *p = 0;
+  *p = '\0';
   symbolP = symbol_find_or_make (name);
   *p = c;
 
-  if (!startswith (input_line_pointer, ",\"bss\"")
-      && !startswith (input_line_pointer, ",\".bss\""))
+  if (!startswith (input_line_pointer, ",\"bss\"") &&
+      !startswith (input_line_pointer, ",\".bss\""))
     {
       as_bad (_("bad .reserve segment -- expected BSS segment"));
+      ignore_rest_of_line ();
       return;
     }
 
@@ -4163,76 +3653,71 @@ s_reserve (int ignore ATTRIBUTE_UNUSED)
   if (*input_line_pointer == ',')
     {
       ++input_line_pointer;
-
       SKIP_WHITESPACE ();
+      
       if (*input_line_pointer == '\n')
-	{
-	  as_bad (_("missing alignment"));
-	  ignore_rest_of_line ();
-	  return;
-	}
+        {
+          as_bad (_("missing alignment"));
+          ignore_rest_of_line ();
+          return;
+        }
 
       align = (int) get_absolute_expression ();
 
       if (align < 0)
-	{
-	  as_bad (_("negative alignment"));
-	  ignore_rest_of_line ();
-	  return;
-	}
+        {
+          as_bad (_("negative alignment"));
+          ignore_rest_of_line ();
+          return;
+        }
 
       if (align != 0)
-	{
-	  temp = mylog2 (align);
-	  if (temp < 0)
-	    {
-	      as_bad (_("alignment not a power of 2"));
-	      ignore_rest_of_line ();
-	      return;
-	    }
-
-	  align = temp;
-	}
+        {
+          temp = mylog2 (align);
+          if (temp < 0)
+            {
+              as_bad (_("alignment not a power of 2"));
+              ignore_rest_of_line ();
+              return;
+            }
+          align = temp;
+        }
 
       record_alignment (bss_section, align);
     }
-  else
-    align = 0;
 
-  if (!S_IS_DEFINED (symbolP))
-    {
-      if (! need_pass_2)
-	{
-	  char *pfrag;
-	  segT current_seg = now_seg;
-	  subsegT current_subseg = now_subseg;
-
-	  /* Switch to bss.  */
-	  subseg_set (bss_section, 1);
-
-	  if (align)
-	    /* Do alignment.  */
-	    frag_align (align, 0, 0);
-
-	  /* Detach from old frag.  */
-	  if (S_GET_SEGMENT (symbolP) == bss_section)
-	    symbol_get_frag (symbolP)->fr_symbol = NULL;
-
-	  symbol_set_frag (symbolP, frag_now);
-	  pfrag = frag_var (rs_org, 1, 1, 0, symbolP, size, NULL);
-	  *pfrag = 0;
-
-	  S_SET_SEGMENT (symbolP, bss_section);
-
-	  subseg_set (current_seg, current_subseg);
-
-	  S_SET_SIZE (symbolP, size);
-	}
-    }
-  else
+  if (S_IS_DEFINED (symbolP))
     {
       as_warn (_("Ignoring attempt to re-define symbol %s"),
-	       S_GET_NAME (symbolP));
+               S_GET_NAME (symbolP));
+    }
+  else if (!need_pass_2)
+    {
+      char *pfrag;
+      segT current_seg = now_seg;
+      subsegT current_subseg = now_subseg;
+
+      subseg_set (bss_section, 1);
+
+      if (align)
+        frag_align (align, 0, 0);
+
+      if (S_GET_SEGMENT (symbolP) == bss_section)
+        {
+          symbolS *frag_symbol = symbol_get_frag (symbolP)->fr_symbol;
+          if (frag_symbol)
+            symbol_get_frag (symbolP)->fr_symbol = NULL;
+        }
+
+      symbol_set_frag (symbolP, frag_now);
+      pfrag = frag_var (rs_org, 1, 1, 0, symbolP, size, NULL);
+      if (pfrag)
+        *pfrag = 0;
+
+      S_SET_SEGMENT (symbolP, bss_section);
+      S_SET_SIZE (symbolP, size);
+
+      subseg_set (current_seg, current_subseg);
     }
 
   demand_empty_rest_of_line ();
@@ -4248,10 +3733,10 @@ s_common (int ignore ATTRIBUTE_UNUSED)
   symbolS *symbolP;
 
   c = get_symbol_name (&name);
-  /* Just after name is now '\0'.  */
   p = input_line_pointer;
   restore_line_pointer (c);
   SKIP_WHITESPACE ();
+  
   if (*input_line_pointer != ',')
     {
       as_bad (_("Expected comma after symbol-name"));
@@ -4259,200 +3744,207 @@ s_common (int ignore ATTRIBUTE_UNUSED)
       return;
     }
 
-  /* Skip ','.  */
   input_line_pointer++;
 
   if ((temp = get_absolute_expression ()) < 0)
     {
       as_bad (_(".COMMon length (%lu) out of range ignored"),
-	      (unsigned long) temp);
+              (unsigned long) temp);
       ignore_rest_of_line ();
       return;
     }
+  
   size = temp;
   *p = 0;
   symbolP = symbol_find_or_make (name);
   *p = c;
+  
   if (S_IS_DEFINED (symbolP) && ! S_IS_COMMON (symbolP))
     {
       as_bad (_("Ignoring attempt to re-define symbol"));
       ignore_rest_of_line ();
       return;
     }
+  
   if (S_GET_VALUE (symbolP) != 0)
     {
       if (S_GET_VALUE (symbolP) != (valueT) size)
-	{
-	  as_warn (_("Length of .comm \"%s\" is already %ld. Not changed to %ld."),
-		   S_GET_NAME (symbolP), (long) S_GET_VALUE (symbolP), (long) size);
-	}
+        {
+          as_warn (_("Length of .comm \"%s\" is already %ld. Not changed to %ld."),
+                   S_GET_NAME (symbolP), (long) S_GET_VALUE (symbolP), (long) size);
+        }
     }
+  
   know (symbol_get_frag (symbolP) == &zero_address_frag);
+  
   if (*input_line_pointer != ',')
     {
       as_bad (_("Expected comma after common length"));
       ignore_rest_of_line ();
       return;
     }
+  
   input_line_pointer++;
   SKIP_WHITESPACE ();
+  
   if (*input_line_pointer != '"')
     {
       temp = get_absolute_expression ();
 
       if (temp < 0)
-	{
-	  as_bad (_("negative alignment"));
-	  ignore_rest_of_line ();
-	  return;
-	}
+        {
+          as_bad (_("negative alignment"));
+          ignore_rest_of_line ();
+          return;
+        }
 
       if (symbol_get_obj (symbolP)->local)
-	{
-	  segT old_sec;
-	  int old_subsec;
-	  int align;
+        {
+          segT old_sec = now_seg;
+          int old_subsec = now_subseg;
+          int align = (temp == 0) ? 0 : mylog2 (temp);
 
-	  old_sec = now_seg;
-	  old_subsec = now_subseg;
+          if (align < 0)
+            {
+              as_bad (_("alignment not a power of 2"));
+              ignore_rest_of_line ();
+              return;
+            }
 
-	  if (temp == 0)
-	    align = 0;
-	  else
-	    align = mylog2 (temp);
-
-	  if (align < 0)
-	    {
-	      as_bad (_("alignment not a power of 2"));
-	      ignore_rest_of_line ();
-	      return;
-	    }
-
-	  record_alignment (bss_section, align);
-	  subseg_set (bss_section, 0);
-	  if (align)
-	    frag_align (align, 0, 0);
-	  if (S_GET_SEGMENT (symbolP) == bss_section)
-	    symbol_get_frag (symbolP)->fr_symbol = 0;
-	  symbol_set_frag (symbolP, frag_now);
-	  p = frag_var (rs_org, 1, 1, 0, symbolP, size, NULL);
-	  *p = 0;
-	  S_SET_SEGMENT (symbolP, bss_section);
-	  S_CLEAR_EXTERNAL (symbolP);
-	  S_SET_SIZE (symbolP, size);
-	  subseg_set (old_sec, old_subsec);
-	}
+          record_alignment (bss_section, align);
+          subseg_set (bss_section, 0);
+          if (align)
+            frag_align (align, 0, 0);
+          if (S_GET_SEGMENT (symbolP) == bss_section)
+            symbol_get_frag (symbolP)->fr_symbol = 0;
+          symbol_set_frag (symbolP, frag_now);
+          p = frag_var (rs_org, 1, 1, 0, symbolP, size, NULL);
+          *p = 0;
+          S_SET_SEGMENT (symbolP, bss_section);
+          S_CLEAR_EXTERNAL (symbolP);
+          S_SET_SIZE (symbolP, size);
+          subseg_set (old_sec, old_subsec);
+        }
       else
-	{
-	allocate_common:
-	  S_SET_VALUE (symbolP, size);
-	  S_SET_ALIGN (symbolP, temp);
-	  S_SET_SIZE (symbolP, size);
-	  S_SET_EXTERNAL (symbolP);
-	  S_SET_SEGMENT (symbolP, bfd_com_section_ptr);
-	}
+        {
+          S_SET_VALUE (symbolP, size);
+          S_SET_ALIGN (symbolP, temp);
+          S_SET_SIZE (symbolP, size);
+          S_SET_EXTERNAL (symbolP);
+          S_SET_SEGMENT (symbolP, bfd_com_section_ptr);
+        }
     }
   else
     {
       input_line_pointer++;
-      /* @@ Some use the dot, some don't.  Can we get some consistency??  */
       if (*input_line_pointer == '.')
-	input_line_pointer++;
-      /* @@ Some say data, some say bss.  */
-      if (!startswith (input_line_pointer, "bss\"")
-	  && !startswith (input_line_pointer, "data\""))
-	{
-	  while (*--input_line_pointer != '"')
-	    ;
-	  input_line_pointer--;
-	  goto bad_common_segment;
-	}
+        input_line_pointer++;
+      
+      if (!startswith (input_line_pointer, "bss\"") &&
+          !startswith (input_line_pointer, "data\""))
+        {
+          while (*--input_line_pointer != '"' && input_line_pointer >= name)
+            ;
+          if (input_line_pointer >= name)
+            input_line_pointer--;
+          
+          p = input_line_pointer;
+          while (*p && *p != '\n')
+            p++;
+          c = *p;
+          *p = '\0';
+          as_bad (_("bad .common segment %s"), input_line_pointer + 1);
+          *p = c;
+          input_line_pointer = p;
+          ignore_rest_of_line ();
+          return;
+        }
+      
       while (*input_line_pointer++ != '"')
-	;
-      goto allocate_common;
+        ;
+      
+      S_SET_VALUE (symbolP, size);
+      S_SET_ALIGN (symbolP, temp);
+      S_SET_SIZE (symbolP, size);
+      S_SET_EXTERNAL (symbolP);
+      S_SET_SEGMENT (symbolP, bfd_com_section_ptr);
     }
 
   symbol_get_bfdsym (symbolP)->flags |= BSF_OBJECT;
-
   demand_empty_rest_of_line ();
-  return;
-
-  {
-  bad_common_segment:
-    p = input_line_pointer;
-    while (*p && *p != '\n')
-      p++;
-    c = *p;
-    *p = '\0';
-    as_bad (_("bad .common segment %s"), input_line_pointer + 1);
-    *p = c;
-    input_line_pointer = p;
-    ignore_rest_of_line ();
-    return;
-  }
 }
 
 /* Handle the .empty pseudo-op.  This suppresses the warnings about
    invalid delay slot usage.  */
 
 static void
-s_empty (int ignore ATTRIBUTE_UNUSED)
+s_empty (int ignore)
 {
-  /* The easy way to implement is to just forget about the last
-     instruction.  */
+  (void)ignore;
   last_insn = NULL;
 }
 
 static void
 s_seg (int ignore ATTRIBUTE_UNUSED)
 {
-
-  if (startswith (input_line_pointer, "\"text\""))
-    {
-      input_line_pointer += 6;
-      s_text (0);
-      return;
-    }
-  if (startswith (input_line_pointer, "\"data\""))
-    {
-      input_line_pointer += 6;
-      s_data (0);
-      return;
-    }
+  struct {
+    const char *name;
+    int length;
+    void (*handler)(int);
+  } segments[] = {
+    {"\"text\"", 6, s_text},
+    {"\"data\"", 6, s_data},
+    {"\"bss\"", 5, NULL}
+  };
+  
   if (startswith (input_line_pointer, "\"data1\""))
     {
       input_line_pointer += 7;
       s_data1 ();
       return;
     }
-  if (startswith (input_line_pointer, "\"bss\""))
+
+  for (int i = 0; i < 3; i++)
     {
-      input_line_pointer += 5;
-      /* We only support 2 segments -- text and data -- for now, so
-	 things in the "bss segment" will have to go into data for now.
-	 You can still allocate SEG_BSS stuff with .lcomm or .reserve.  */
-      subseg_set (data_section, 255);	/* FIXME-SOMEDAY.  */
-      return;
+      if (startswith (input_line_pointer, segments[i].name))
+        {
+          input_line_pointer += segments[i].length;
+          if (segments[i].handler)
+            {
+              segments[i].handler (0);
+            }
+          else
+            {
+              subseg_set (data_section, 255);
+            }
+          return;
+        }
     }
+
   as_bad (_("Unknown segment type"));
   demand_empty_rest_of_line ();
 }
 
 static void
-s_data1 (void)
+s_data1(void)
 {
-  subseg_set (data_section, 1);
-  demand_empty_rest_of_line ();
+    subseg_set(data_section, 1);
+    demand_empty_rest_of_line();
 }
 
 static void
 s_proc (int ignore ATTRIBUTE_UNUSED)
 {
-  while (!is_end_of_stmt (*input_line_pointer))
+  if (input_line_pointer == NULL)
+    return;
+    
+  while (*input_line_pointer != '\0' && !is_end_of_stmt(*input_line_pointer))
     {
       ++input_line_pointer;
     }
-  ++input_line_pointer;
+  
+  if (*input_line_pointer != '\0')
+    ++input_line_pointer;
 }
 
 /* This static variable is set by s_uacons to tell sparc_cons_align
@@ -4465,12 +3957,11 @@ static int sparc_no_align_cons = 0;
    to be aligned.  */
 
 static void
-s_uacons (int bytes)
+s_uacons(int bytes)
 {
-  /* Tell sparc_cons_align not to align this value.  */
-  sparc_no_align_cons = 1;
-  cons (bytes);
-  sparc_no_align_cons = 0;
+    sparc_no_align_cons = 1;
+    cons(bytes);
+    sparc_no_align_cons = 0;
 }
 
 /* This handles the native word allocation pseudo-op .nword.
@@ -4480,7 +3971,8 @@ s_uacons (int bytes)
 static void
 s_ncons (int bytes ATTRIBUTE_UNUSED)
 {
-  cons (sparc_arch_size == 32 ? 4 : 8);
+  int size = (sparc_arch_size == 32) ? 4 : 8;
+  cons (size);
 }
 
 /* Handle the SPARC ELF .register pseudo-op.  This sets the binding of a
@@ -4497,13 +3989,18 @@ s_register (int ignore ATTRIBUTE_UNUSED)
   int reg;
   int flags;
   char *regname;
+  const char *error_msg = _("register syntax is .register %%g[2367],{#scratch|symbolname|#ignore}");
 
   if (input_line_pointer[0] != '%'
       || input_line_pointer[1] != 'g'
       || ((input_line_pointer[2] & ~1) != '2'
 	  && (input_line_pointer[2] & ~1) != '6')
       || input_line_pointer[3] != ',')
-    as_bad (_("register syntax is .register %%g[2367],{#scratch|symbolname|#ignore}"));
+    {
+      as_bad (error_msg);
+      return;
+    }
+
   reg = input_line_pointer[2] - '0';
   input_line_pointer += 4;
 
@@ -4512,11 +4009,12 @@ s_register (int ignore ATTRIBUTE_UNUSED)
       ++input_line_pointer;
       c = get_symbol_name (&regname);
       if (strcmp (regname, "scratch") && strcmp (regname, "ignore"))
-	as_bad (_("register syntax is .register %%g[2367],{#scratch|symbolname|#ignore}"));
-      if (regname[0] == 'i')
-	regname = NULL;
-      else
-	regname = (char *) "";
+	{
+	  as_bad (error_msg);
+	  restore_line_pointer (c);
+	  return;
+	}
+      regname = (regname[0] == 'i') ? NULL : (char *) "";
     }
   else
     {
@@ -4530,20 +4028,27 @@ s_register (int ignore ATTRIBUTE_UNUSED)
 	  if ((regname && globals[reg] != (symbolS *) 1
 	       && strcmp (S_GET_NAME (globals[reg]), regname))
 	      || ((regname != NULL) ^ (globals[reg] != (symbolS *) 1)))
-	    as_bad (_("redefinition of global register"));
+	    {
+	      as_bad (_("redefinition of global register"));
+	      restore_line_pointer (c);
+	      return;
+	    }
 	}
       else
 	{
 	  if (regname == NULL)
-	    globals[reg] = (symbolS *) 1;
+	    {
+	      globals[reg] = (symbolS *) 1;
+	    }
 	  else
 	    {
-	      if (*regname)
+	      if (*regname && symbol_find (regname))
 		{
-		  if (symbol_find (regname))
-		    as_bad (_("Register symbol %s already defined."),
-			    regname);
+		  as_bad (_("Register symbol %s already defined."), regname);
+		  restore_line_pointer (c);
+		  return;
 		}
+
 	      globals[reg] = symbol_make (regname);
 	      flags = symbol_get_bfdsym (globals[reg])->flags;
 	      if (! *regname)
@@ -4554,10 +4059,6 @@ s_register (int ignore ATTRIBUTE_UNUSED)
 	      S_SET_VALUE (globals[reg], reg);
 	      S_SET_ALIGN (globals[reg], reg);
 	      S_SET_SIZE (globals[reg], 0);
-	      /* Although we actually want undefined_section here,
-		 we have to use absolute_section, because otherwise
-		 generic as code will make it a COM section.
-		 We fix this up in sparc_adjust_symtab.  */
 	      S_SET_SEGMENT (globals[reg], absolute_section);
 	      S_SET_OTHER (globals[reg], 0);
 	      elf_symbol (symbol_get_bfdsym (globals[reg]))
@@ -4569,8 +4070,7 @@ s_register (int ignore ATTRIBUTE_UNUSED)
 	}
     }
 
-  (void) restore_line_pointer (c);
-
+  restore_line_pointer (c);
   demand_empty_rest_of_line ();
 }
 
@@ -4584,13 +4084,22 @@ sparc_adjust_symtab (void)
 
   for (sym = symbol_rootP; sym != NULL; sym = symbol_next (sym))
     {
-      if (ELF_ST_TYPE (elf_symbol (symbol_get_bfdsym (sym))
-		       ->internal_elf_sym.st_info) != STT_REGISTER)
-	continue;
+      bfd_asymbol *bfd_sym = symbol_get_bfdsym (sym);
+      if (bfd_sym == NULL)
+        continue;
 
-      if (ELF_ST_TYPE (elf_symbol (symbol_get_bfdsym (sym))
-		       ->internal_elf_sym.st_shndx != SHN_UNDEF))
-	continue;
+      elf_symbol_type *elf_sym = elf_symbol (bfd_sym);
+      if (elf_sym == NULL)
+        continue;
+
+      unsigned char st_info = elf_sym->internal_elf_sym.st_info;
+      unsigned short st_shndx = elf_sym->internal_elf_sym.st_shndx;
+
+      if (ELF_ST_TYPE (st_info) != STT_REGISTER)
+        continue;
+
+      if (st_shndx != SHN_UNDEF)
+        continue;
 
       S_SET_SEGMENT (sym, undefined_section);
     }
@@ -4612,29 +4121,21 @@ sparc_cons_align (int nbytes)
 {
   int nalign;
 
-  /* Only do this if we are enforcing aligned data.  */
-  if (! enforce_aligned_data)
-    return;
-
-  /* Don't align if this is an unaligned pseudo-op.  */
-  if (sparc_no_align_cons)
+  if (!enforce_aligned_data || sparc_no_align_cons)
     return;
 
   nalign = mylog2 (nbytes);
-  if (nalign == 0)
+  if (nalign <= 0)
     return;
-
-  gas_assert (nalign > 0);
 
   if (now_seg == absolute_section)
     {
       if ((abs_section_offset & ((1 << nalign) - 1)) != 0)
-	as_bad (_("misaligned data"));
+        as_bad (_("misaligned data"));
       return;
     }
 
   frag_var (rs_align_test, 1, 1, 0, NULL, nalign, NULL);
-
   record_alignment (now_seg, nalign);
 }
 
@@ -4646,43 +4147,48 @@ sparc_handle_align (fragS *fragp)
   int count, fix;
   char *p;
 
+  if (!fragp || !fragp->fr_next) {
+    return;
+  }
+
   count = fragp->fr_next->fr_address - fragp->fr_address - fragp->fr_fix;
 
   switch (fragp->fr_type)
     {
     case rs_align_test:
-      if (count != 0)
-	as_bad_where (fragp->fr_file, fragp->fr_line, _("misaligned data"));
+      if (count != 0) {
+        as_bad_where (fragp->fr_file, fragp->fr_line, _("misaligned data"));
+      }
       break;
 
     case rs_align_code:
       p = fragp->fr_literal + fragp->fr_fix;
       fix = 0;
 
-      if (count & 3)
-	{
-	  fix = count & 3;
-	  memset (p, 0, fix);
-	  p += fix;
-	  count -= fix;
-	}
+      if (count & 3) {
+        fix = count & 3;
+        memset (p, 0, fix);
+        p += fix;
+        count -= fix;
+      }
 
-      if (SPARC_OPCODE_ARCH_V9_P (max_architecture) && count > 8)
-	{
-	  unsigned wval = (0x30680000 | count >> 2); /* ba,a,pt %xcc, 1f  */
-	  if (INSN_BIG_ENDIAN)
-	    number_to_chars_bigendian (p, wval, 4);
-	  else
-	    number_to_chars_littleendian (p, wval, 4);
-	  p += 4;
-	  count -= 4;
-	  fix += 4;
-	}
+      if (SPARC_OPCODE_ARCH_V9_P (max_architecture) && count > 8) {
+        unsigned wval = (0x30680000U | (unsigned)(count >> 2));
+        if (INSN_BIG_ENDIAN) {
+          number_to_chars_bigendian (p, wval, 4);
+        } else {
+          number_to_chars_littleendian (p, wval, 4);
+        }
+        p += 4;
+        count -= 4;
+        fix += 4;
+      }
 
-      if (INSN_BIG_ENDIAN)
-	number_to_chars_bigendian (p, 0x01000000, 4);
-      else
-	number_to_chars_littleendian (p, 0x01000000, 4);
+      if (INSN_BIG_ENDIAN) {
+        number_to_chars_bigendian (p, 0x01000000U, 4);
+      } else {
+        number_to_chars_littleendian (p, 0x01000000U, 4);
+      }
 
       fragp->fr_fix += fix;
       fragp->fr_var = 4;
@@ -4698,28 +4204,37 @@ sparc_handle_align (fragS *fragp)
 void
 sparc_elf_final_processing (void)
 {
-  /* Set the Sparc ELF flag bits.  FIXME: There should probably be some
-     sort of BFD interface for this.  */
-  if (sparc_arch_size == 64)
-    {
-      switch (sparc_memory_model)
-	{
-	case MM_RMO:
-	  elf_elfheader (stdoutput)->e_flags |= EF_SPARCV9_RMO;
-	  break;
-	case MM_PSO:
-	  elf_elfheader (stdoutput)->e_flags |= EF_SPARCV9_PSO;
-	  break;
-	default:
-	  break;
-	}
+  Elf_Internal_Ehdr *header;
+  
+  if (!stdoutput) {
+    return;
+  }
+  
+  header = elf_elfheader (stdoutput);
+  if (!header) {
+    return;
+  }
+  
+  if (sparc_arch_size == 64) {
+    switch (sparc_memory_model) {
+      case MM_RMO:
+        header->e_flags |= EF_SPARCV9_RMO;
+        break;
+      case MM_PSO:
+        header->e_flags |= EF_SPARCV9_PSO;
+        break;
+      default:
+        break;
     }
-  else if (current_architecture >= SPARC_OPCODE_ARCH_V9)
-    elf_elfheader (stdoutput)->e_flags |= EF_SPARC_32PLUS;
-  if (current_architecture == SPARC_OPCODE_ARCH_V9A)
-    elf_elfheader (stdoutput)->e_flags |= EF_SPARC_SUN_US1;
-  else if (current_architecture == SPARC_OPCODE_ARCH_V9B)
-    elf_elfheader (stdoutput)->e_flags |= EF_SPARC_SUN_US1|EF_SPARC_SUN_US3;
+  } else if (current_architecture >= SPARC_OPCODE_ARCH_V9) {
+    header->e_flags |= EF_SPARC_32PLUS;
+  }
+  
+  if (current_architecture == SPARC_OPCODE_ARCH_V9A) {
+    header->e_flags |= EF_SPARC_SUN_US1;
+  } else if (current_architecture == SPARC_OPCODE_ARCH_V9B) {
+    header->e_flags |= EF_SPARC_SUN_US1 | EF_SPARC_SUN_US3;
+  }
 }
 
 const char *
@@ -4730,131 +4245,155 @@ sparc_cons (expressionS *exp, int size)
 
   SKIP_WHITESPACE ();
   save = input_line_pointer;
-  if (input_line_pointer[0] == '%'
-      && input_line_pointer[1] == 'r'
-      && input_line_pointer[2] == '_')
+  
+  if (input_line_pointer[0] != '%' || 
+      input_line_pointer[1] != 'r' || 
+      input_line_pointer[2] != '_')
     {
-      if (startswith (input_line_pointer + 3, "disp"))
-	{
-	  input_line_pointer += 7;
-	  sparc_cons_special_reloc = "disp";
-	}
-      else if (startswith (input_line_pointer + 3, "plt"))
-	{
-	  if (size != 4 && size != 8)
-	    as_bad (_("Illegal operands: %%r_plt in %d-byte data field"), size);
-	  else
-	    {
-	      input_line_pointer += 6;
-	      sparc_cons_special_reloc = "plt";
-	    }
-	}
-      else if (startswith (input_line_pointer + 3, "tls_dtpoff"))
-	{
-	  if (size != 4 && size != 8)
-	    as_bad (_("Illegal operands: %%r_tls_dtpoff in %d-byte data field"), size);
-	  else
-	    {
-	      input_line_pointer += 13;
-	      sparc_cons_special_reloc = "tls_dtpoff";
-	    }
-	}
-      if (sparc_cons_special_reloc)
-	{
-	  int bad = 0;
-
-	  switch (size)
-	    {
-	    case 1:
-	      if (*input_line_pointer != '8')
-		bad = 1;
-	      input_line_pointer--;
-	      break;
-	    case 2:
-	      if (input_line_pointer[0] != '1' || input_line_pointer[1] != '6')
-		bad = 1;
-	      break;
-	    case 4:
-	      if (input_line_pointer[0] != '3' || input_line_pointer[1] != '2')
-		bad = 1;
-	      break;
-	    case 8:
-	      if (input_line_pointer[0] != '6' || input_line_pointer[1] != '4')
-		bad = 1;
-	      break;
-	    default:
-	      bad = 1;
-	      break;
-	    }
-
-	  if (bad)
-	    {
-	      as_bad (_("Illegal operands: Only %%r_%s%d allowed in %d-byte data fields"),
-		      sparc_cons_special_reloc, size * 8, size);
-	    }
-	  else
-	    {
-	      input_line_pointer += 2;
-	      if (*input_line_pointer != '(')
-		{
-		  as_bad (_("Illegal operands: %%r_%s%d requires arguments in ()"),
-			  sparc_cons_special_reloc, size * 8);
-		  bad = 1;
-		}
-	    }
-
-	  if (bad)
-	    {
-	      input_line_pointer = save;
-	      sparc_cons_special_reloc = NULL;
-	    }
-	  else
-	    {
-	      int c;
-	      char *end = ++input_line_pointer;
-	      int npar = 0;
-
-	      while (! is_end_of_stmt (c = *end))
-		{
-		  if (c == '(')
-	  	    npar++;
-		  else if (c == ')')
-	  	    {
-		      if (!npar)
-	      		break;
-		      npar--;
-		    }
-	    	  end++;
-		}
-
-	      if (c != ')')
-		as_bad (_("Illegal operands: %%r_%s%d requires arguments in ()"),
-			sparc_cons_special_reloc, size * 8);
-	      else
-		{
-		  *end = '\0';
-		  expression (exp);
-		  *end = c;
-		  if (input_line_pointer != end)
-		    {
-		      as_bad (_("Illegal operands: %%r_%s%d requires arguments in ()"),
-			      sparc_cons_special_reloc, size * 8);
-		    }
-		  else
-		    {
-		      input_line_pointer++;
-		      SKIP_WHITESPACE ();
-		      c = *input_line_pointer;
-		      if (! is_end_of_stmt (c) && c != ',')
-			as_bad (_("Illegal operands: garbage after %%r_%s%d()"),
-			        sparc_cons_special_reloc, size * 8);
-		    }
-		}
-	    }
-	}
+      expression (exp);
+      return NULL;
     }
+
+  if (startswith (input_line_pointer + 3, "disp"))
+    {
+      input_line_pointer += 7;
+      sparc_cons_special_reloc = "disp";
+    }
+  else if (startswith (input_line_pointer + 3, "plt"))
+    {
+      if (size != 4 && size != 8)
+        {
+          as_bad (_("Illegal operands: %%r_plt in %d-byte data field"), size);
+          input_line_pointer = save;
+          expression (exp);
+          return NULL;
+        }
+      input_line_pointer += 6;
+      sparc_cons_special_reloc = "plt";
+    }
+  else if (startswith (input_line_pointer + 3, "tls_dtpoff"))
+    {
+      if (size != 4 && size != 8)
+        {
+          as_bad (_("Illegal operands: %%r_tls_dtpoff in %d-byte data field"), size);
+          input_line_pointer = save;
+          expression (exp);
+          return NULL;
+        }
+      input_line_pointer += 13;
+      sparc_cons_special_reloc = "tls_dtpoff";
+    }
+
   if (sparc_cons_special_reloc == NULL)
-    expression (exp);
+    {
+      expression (exp);
+      return NULL;
+    }
+
+  int bad = 0;
+  const char *expected_suffix;
+  int suffix_len;
+
+  switch (size)
+    {
+    case 1:
+      expected_suffix = "8";
+      suffix_len = 1;
+      if (*input_line_pointer != '8')
+        bad = 1;
+      input_line_pointer--;
+      break;
+    case 2:
+      expected_suffix = "16";
+      suffix_len = 2;
+      if (input_line_pointer[0] != '1' || input_line_pointer[1] != '6')
+        bad = 1;
+      break;
+    case 4:
+      expected_suffix = "32";
+      suffix_len = 2;
+      if (input_line_pointer[0] != '3' || input_line_pointer[1] != '2')
+        bad = 1;
+      break;
+    case 8:
+      expected_suffix = "64";
+      suffix_len = 2;
+      if (input_line_pointer[0] != '6' || input_line_pointer[1] != '4')
+        bad = 1;
+      break;
+    default:
+      bad = 1;
+      break;
+    }
+
+  if (bad)
+    {
+      as_bad (_("Illegal operands: Only %%r_%s%d allowed in %d-byte data fields"),
+              sparc_cons_special_reloc, size * 8, size);
+      input_line_pointer = save;
+      expression (exp);
+      return NULL;
+    }
+
+  input_line_pointer += (size == 1) ? 1 : 2;
+  
+  if (*input_line_pointer != '(')
+    {
+      as_bad (_("Illegal operands: %%r_%s%d requires arguments in ()"),
+              sparc_cons_special_reloc, size * 8);
+      input_line_pointer = save;
+      expression (exp);
+      return NULL;
+    }
+
+  char *end = ++input_line_pointer;
+  int npar = 0;
+  int c;
+
+  while (! is_end_of_stmt (c = *end))
+    {
+      if (c == '(')
+        npar++;
+      else if (c == ')')
+        {
+          if (!npar)
+            break;
+          npar--;
+        }
+      end++;
+    }
+
+  if (c != ')')
+    {
+      as_bad (_("Illegal operands: %%r_%s%d requires arguments in ()"),
+              sparc_cons_special_reloc, size * 8);
+      input_line_pointer = save;
+      expression (exp);
+      return NULL;
+    }
+
+  *end = '\0';
+  expression (exp);
+  *end = c;
+  
+  if (input_line_pointer != end)
+    {
+      as_bad (_("Illegal operands: %%r_%s%d requires arguments in ()"),
+              sparc_cons_special_reloc, size * 8);
+      input_line_pointer = save;
+      return NULL;
+    }
+
+  input_line_pointer++;
+  SKIP_WHITESPACE ();
+  c = *input_line_pointer;
+  
+  if (! is_end_of_stmt (c) && c != ',')
+    {
+      as_bad (_("Illegal operands: garbage after %%r_%s%d()"),
+              sparc_cons_special_reloc, size * 8);
+    }
+
   return sparc_cons_special_reloc;
 }
 
@@ -4862,139 +4401,183 @@ sparc_cons (expressionS *exp, int size)
    reloc for a cons.  We could use the definition there, except that
    we want to handle little endian relocs specially.  */
 
-void
-cons_fix_new_sparc (fragS *frag,
-		    int where,
-		    unsigned int nbytes,
-		    expressionS *exp,
-		    const char *sparc_cons_special_reloc)
+static bfd_reloc_code_real_type
+get_base_reloc_type(unsigned int nbytes)
 {
-  bfd_reloc_code_real_type r;
-
-  r = (nbytes == 1 ? BFD_RELOC_8 :
-       (nbytes == 2 ? BFD_RELOC_16 :
-	(nbytes == 4 ? BFD_RELOC_32 : BFD_RELOC_64)));
-
-  if (target_little_endian_data
-      && nbytes == 4
-      && now_seg->flags & SEC_ALLOC)
-    r = BFD_RELOC_SPARC_REV32;
-
-#ifdef TE_SOLARIS
-  /* The Solaris linker does not allow R_SPARC_UA64
-     relocations for 32-bit executables.  */
-  if (!target_little_endian_data
-      && sparc_arch_size != 64
-      && r == BFD_RELOC_64)
-    r = BFD_RELOC_32;
-#endif
-
-  if (sparc_cons_special_reloc)
-    {
-      if (*sparc_cons_special_reloc == 'd')
-	switch (nbytes)
-	  {
-	  case 1: r = BFD_RELOC_8_PCREL; break;
-	  case 2: r = BFD_RELOC_16_PCREL; break;
-	  case 4: r = BFD_RELOC_32_PCREL; break;
-	  case 8: r = BFD_RELOC_64_PCREL; break;
-	  default: abort ();
-	  }
-      else if (*sparc_cons_special_reloc == 'p')
-	switch (nbytes)
-	  {
-	  case 4: r = BFD_RELOC_SPARC_PLT32; break;
-	  case 8: r = BFD_RELOC_SPARC_PLT64; break;
-	  }
-      else
-	switch (nbytes)
-	  {
-	  case 4: r = BFD_RELOC_SPARC_TLS_DTPOFF32; break;
-	  case 8: r = BFD_RELOC_SPARC_TLS_DTPOFF64; break;
-	  }
+    switch (nbytes) {
+    case 1: return BFD_RELOC_8;
+    case 2: return BFD_RELOC_16;
+    case 4: return BFD_RELOC_32;
+    case 8: return BFD_RELOC_64;
+    default: abort();
     }
-  else if (sparc_no_align_cons
-	   || /* PR 20803 - relocs in the .eh_frame section
-		 need to support unaligned access.  */
-	   strcmp (now_seg->name, ".eh_frame") == 0)
-    {
-      switch (nbytes)
-	{
-	case 2: r = BFD_RELOC_SPARC_UA16; break;
-	case 4: r = BFD_RELOC_SPARC_UA32; break;
-#ifdef TE_SOLARIS
-        /* The Solaris linker does not allow R_SPARC_UA64
-	   relocations for 32-bit executables.  */
-        case 8: r = sparc_arch_size == 64 ?
-                    BFD_RELOC_SPARC_UA64 : BFD_RELOC_SPARC_UA32; break;
-#else
-	case 8: r = BFD_RELOC_SPARC_UA64; break;
-#endif
-	default: abort ();
-	}
-   }
+}
 
-  fix_new_exp (frag, where, nbytes, exp, 0, r);
+static bfd_reloc_code_real_type
+get_pcrel_reloc_type(unsigned int nbytes)
+{
+    switch (nbytes) {
+    case 1: return BFD_RELOC_8_PCREL;
+    case 2: return BFD_RELOC_16_PCREL;
+    case 4: return BFD_RELOC_32_PCREL;
+    case 8: return BFD_RELOC_64_PCREL;
+    default: abort();
+    }
+}
+
+static bfd_reloc_code_real_type
+get_plt_reloc_type(unsigned int nbytes)
+{
+    switch (nbytes) {
+    case 4: return BFD_RELOC_SPARC_PLT32;
+    case 8: return BFD_RELOC_SPARC_PLT64;
+    default: abort();
+    }
+}
+
+static bfd_reloc_code_real_type
+get_dtpoff_reloc_type(unsigned int nbytes)
+{
+    switch (nbytes) {
+    case 4: return BFD_RELOC_SPARC_TLS_DTPOFF32;
+    case 8: return BFD_RELOC_SPARC_TLS_DTPOFF64;
+    default: abort();
+    }
+}
+
+static bfd_reloc_code_real_type
+get_unaligned_reloc_type(unsigned int nbytes)
+{
+    switch (nbytes) {
+    case 2: return BFD_RELOC_SPARC_UA16;
+    case 4: return BFD_RELOC_SPARC_UA32;
+    case 8:
+#ifdef TE_SOLARIS
+        return sparc_arch_size == 64 ? BFD_RELOC_SPARC_UA64 : BFD_RELOC_SPARC_UA32;
+#else
+        return BFD_RELOC_SPARC_UA64;
+#endif
+    default: abort();
+    }
+}
+
+static int
+is_unaligned_access_required(void)
+{
+    return sparc_no_align_cons || strcmp(now_seg->name, ".eh_frame") == 0;
+}
+
+void
+cons_fix_new_sparc(fragS *frag,
+                   int where,
+                   unsigned int nbytes,
+                   expressionS *exp,
+                   const char *sparc_cons_special_reloc)
+{
+    bfd_reloc_code_real_type r;
+
+    r = get_base_reloc_type(nbytes);
+
+    if (target_little_endian_data && nbytes == 4 && (now_seg->flags & SEC_ALLOC)) {
+        r = BFD_RELOC_SPARC_REV32;
+    }
+
+#ifdef TE_SOLARIS
+    if (!target_little_endian_data && sparc_arch_size != 64 && r == BFD_RELOC_64) {
+        r = BFD_RELOC_32;
+    }
+#endif
+
+    if (sparc_cons_special_reloc) {
+        switch (*sparc_cons_special_reloc) {
+        case 'd':
+            r = get_pcrel_reloc_type(nbytes);
+            break;
+        case 'p':
+            r = get_plt_reloc_type(nbytes);
+            break;
+        default:
+            r = get_dtpoff_reloc_type(nbytes);
+            break;
+        }
+    } else if (is_unaligned_access_required()) {
+        r = get_unaligned_reloc_type(nbytes);
+    }
+
+    fix_new_exp(frag, where, nbytes, exp, 0, r);
 }
 
 void
 sparc_cfi_frame_initial_instructions (void)
 {
-  cfi_add_CFA_def_cfa (14, sparc_arch_size == 64 ? 0x7ff : 0);
+  int cfa_offset = (sparc_arch_size == 64) ? 0x7ff : 0;
+  cfi_add_CFA_def_cfa (14, cfa_offset);
 }
 
 int
 sparc_regname_to_dw2regnum (char *regname)
 {
-  char *q;
-  int i;
+  char *endptr;
+  unsigned int regnum;
+  int base_offset;
 
-  if (!regname[0])
+  if (!regname || !regname[0])
     return -1;
 
   switch (regname[0])
     {
-    case 'g': i = 0; break;
-    case 'o': i = 1; break;
-    case 'l': i = 2; break;
-    case 'i': i = 3; break;
-    default: i = -1; break;
-    }
-  if (i != -1)
-    {
-      if (regname[1] < '0' || regname[1] > '8' || regname[2])
-	return -1;
-      return i * 8 + regname[1] - '0';
-    }
-  if (regname[0] == 's' && regname[1] == 'p' && !regname[2])
-    return 14;
-  if (regname[0] == 'f' && regname[1] == 'p' && !regname[2])
-    return 30;
-  if (regname[0] == 'f' || regname[0] == 'r')
-    {
-      unsigned int regnum;
-
-      regnum = strtoul (regname + 1, &q, 10);
-      if (q == NULL || *q)
+    case 'g':
+      base_offset = 0;
+      break;
+    case 'o':
+      base_offset = 8;
+      break;
+    case 'l':
+      base_offset = 16;
+      break;
+    case 'i':
+      base_offset = 24;
+      break;
+    case 's':
+      if (regname[1] == 'p' && regname[2] == '\0')
+        return 14;
+      return -1;
+    case 'f':
+      if (regname[1] == 'p' && regname[2] == '\0')
+        return 30;
+      regnum = strtoul(regname + 1, &endptr, 10);
+      if (endptr == regname + 1 || *endptr != '\0')
         return -1;
-      if (regnum >= ((regname[0] == 'f'
-		      && SPARC_OPCODE_ARCH_V9_P (max_architecture))
-		     ? 64 : 32))
-	return -1;
-      if (regname[0] == 'f')
-	{
-          regnum += 32;
-          if (regnum >= 64 && (regnum & 1))
-	    return -1;
-        }
-      return regnum;
+      if (regnum >= (SPARC_OPCODE_ARCH_V9_P(max_architecture) ? 64U : 32U))
+        return -1;
+      regnum += 32;
+      if (regnum >= 64 && (regnum & 1))
+        return -1;
+      return (int)regnum;
+    case 'r':
+      regnum = strtoul(regname + 1, &endptr, 10);
+      if (endptr == regname + 1 || *endptr != '\0')
+        return -1;
+      if (regnum >= 32)
+        return -1;
+      return (int)regnum;
+    default:
+      return -1;
     }
-  return -1;
+
+  if (regname[1] < '0' || regname[1] > '7' || regname[2] != '\0')
+    return -1;
+
+  return base_offset + (regname[1] - '0');
 }
 
 void
 sparc_cfi_emit_pcrel_expr (expressionS *exp, unsigned int nbytes)
 {
+  if (exp == NULL) {
+    return;
+  }
+  
   sparc_no_align_cons = 1;
   emit_expr_with_reloc (exp, nbytes, "disp");
   sparc_no_align_cons = 0;
